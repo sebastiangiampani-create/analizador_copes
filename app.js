@@ -645,6 +645,21 @@
     return wb;
   }
 
+  function detectActionCodeFromWorkbook(wb){
+    const preferred=['Propuestas','Inscripciones','Asistencias'];
+    for(const name of preferred){
+      if(!wb.Sheets[name]) continue;
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[name],{defval:'',raw:true});
+      for(const row of rows.slice(0,1000)){
+        for(const v of Object.values(row)){
+          const code=mainCodeIn(v);
+          if(code) return code;
+        }
+      }
+    }
+    return '';
+  }
+
   async function syncSourceNow(sourceId,{silent=false}={}){
     const src=(dataset.sources||[]).find(x=>x.id===sourceId);
     if(!src || src.status==='syncing') return;
@@ -662,7 +677,15 @@
 
     try{
       const wb=await workbookFromGoogleSource(src);
-      const fakeFile={name:(src.actionCode||'C0000')+' - '+(src.name||'Google Sheets')+'.xlsx'};
+      const detectedCode=detectActionCodeFromWorkbook(wb);
+      if(detectedCode && (!src.actionCode || src.actionCode==='AUTO')){
+        src.actionCode=detectedCode;
+        if(!dataset.actions.some(a=>a.code===detectedCode)){
+          dataset.actions.push({code:detectedCode,title:src.name||detectedCode,year:new Date().getFullYear(),source:'Google Sheets'});
+        }
+      }
+      if(!/^C\d{4}$/.test(src.actionCode||'')) throw new Error('No pude detectar el código de acción C#### dentro de la planilla.');
+      const fakeFile={name:src.actionCode+' - '+(src.name||'Google Sheets')+'.xlsx'};
       const parsed=parseWorkbook(fakeFile,wb);
       mergeParsed(parsed);
 
@@ -731,14 +754,15 @@
 
   async function saveSourceFromForm(e){
     e.preventDefault();
-    const actionCode=String($('#sourceAction').value||'').trim().toUpperCase();
+    const typedCode=String($('#sourceAction').value||'').trim().toUpperCase();
+    const actionCode=typedCode || 'AUTO';
     const url=$('#sourceUrl').value.trim();
-    if(!/^C\d{4}$/.test(actionCode)){toast('Ingresá un código válido, por ejemplo C0832');return}
+    if(typedCode && !/^C\d{4}$/.test(typedCode)){toast('Usá un código C#### o dejalo vacío para detección automática');return}
     if(!url){toast('Pegá el link de Google Sheets');return}
     const spreadsheetId=spreadsheetIdFromUrl(url);
     if(!spreadsheetId){toast('El link no parece ser una Google Sheet válida');return}
 
-    const duplicate=(dataset.sources||[]).find(x=>x.actionCode===actionCode && x.spreadsheetId===spreadsheetId);
+    const duplicate=(dataset.sources||[]).find(x=>x.spreadsheetId===spreadsheetId);
     if(duplicate){toast('Esa fuente ya está registrada para la acción');return}
 
     const source={
@@ -755,7 +779,7 @@
       createdAt:new Date().toISOString()
     };
     dataset.sources=[...(dataset.sources||[]),source];
-    if(!dataset.actions.some(a=>a.code===actionCode)){
+    if(actionCode!=='AUTO' && !dataset.actions.some(a=>a.code===actionCode)){
       dataset.actions.push({
         code:actionCode,
         title:$('#sourceName').value.trim() || actionCode,

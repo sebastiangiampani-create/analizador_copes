@@ -709,14 +709,17 @@
   }
 
   function startSourceAutoSync(){
-    setInterval(()=>{
+    const runDue=()=>{
       const now=Date.now();
       (dataset.sources||[]).filter(s=>s.active!==false && s.authMode==='public_link').forEach(s=>{
         const intervalMs=(Number(s.intervalMinutes)||5)*60000;
         const last=s.lastSyncAt ? new Date(s.lastSyncAt).getTime() : 0;
-        if(now-last>=intervalMs) syncSourceNow(s.id,{silent:true});
+        const pending=!s.lastSyncAt || s.status==='pending_backend' || !s.status;
+        if(pending || now-last>=intervalMs) syncSourceNow(s.id,{silent:true});
       });
-    },60000);
+    };
+    setTimeout(runDue,500);
+    setInterval(runDue,60000);
   }
 
   function renderSources(){

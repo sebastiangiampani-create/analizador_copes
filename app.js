@@ -913,6 +913,10 @@
       src.lastSyncAt=new Date().toISOString();
       src.lastSyncMessage=parsed.registrations.length+' inscripciones · '+parsed.attendance.length+' asistencias · '+parsed.proposals.length+' propuestas';
       await saveState();
+      if(remoteReady){
+        try{ await saveRemoteAction(src.actionCode); }
+        catch(e){ console.error('No se pudo persistir la sincronización en Supabase',e); }
+      }
       renderAll();
       if(!silent){
         switchView('dashboard');

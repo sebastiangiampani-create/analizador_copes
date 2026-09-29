@@ -5,6 +5,7 @@
   const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], imports: [] };
   let dataset = structuredClone(EMPTY);
   let charts = {};
+  const PALETTE = ['#167566','#2f7fe0','#7b68c7','#d18a3a','#3aa7a0','#7d8c99','#bd6a5a','#5d9b63','#8a6bb8','#c49a3f'];
   let filtered = { registrations: [], attendance: [], proposals: [] };
 
   const $ = (s) => document.querySelector(s);
@@ -106,7 +107,7 @@
       const m=mapRow(raw);
       const pcode=(codeIn(pick(m,['Codigo','Código'])) || code).toUpperCase();
       const commission=String(pick(m,['Comisión','Comision','Taller','Propuesta'])||pcode).trim();
-      const meetingCols=Object.entries(raw).filter(([k,v])=>/^enc\.?s*\d+/i.test(String(k)) && v).map(([k,v])=>({label:k,text:String(v),date:isoDate(v,year)}));
+      const meetingCols=Object.entries(raw).filter(([k,v])=>/^enc\.?\s*\d+/i.test(String(k)) && v).map(([k,v])=>({label:k,text:String(v),date:isoDate(v,year)}));
       const baseDate=isoDate(pick(m,['Fecha']),year);
       if(baseDate && !meetingCols.length) meetingCols.push({label:'Encuentro',text:formatDate(pick(m,['Fecha'])),date:baseDate});
       return {
@@ -287,6 +288,12 @@
     $('#kpiSchools').textContent=unique(regs.map(x=>x.school)).length.toLocaleString('es-AR');
     $('#kpiCommissions').textContent=unique(regs.map(x=>x.commissionCode)).length.toLocaleString('es-AR');
     $('#kpiAttendanceRows').textContent=atts.length.toLocaleString('es-AR');
+    const linkedAttIds=new Set([...attIds].filter(x=>regIds.has(x)));
+    const schoolsReg=unique(regs.map(x=>x.school));
+    const schoolsAtt=new Set(atts.map(x=>x.school).filter(Boolean));
+    $('#insightActions').textContent=unique(regs.map(x=>x.actionCode).concat(atts.map(x=>x.actionCode))).length.toLocaleString('es-AR');
+    $('#insightNoShow').textContent=[...regIds].filter(x=>!linkedAttIds.has(x)).length.toLocaleString('es-AR');
+    $('#insightSchoolsNoShow').textContent=schoolsReg.filter(x=>x&&!schoolsAtt.has(x)).length.toLocaleString('es-AR');
     $('#exportBtn').disabled=!regs.length;
 
     const action=$('#filterAction').value;
@@ -310,6 +317,18 @@
       {label:'Asistentes',data:commRegs.map(x=>attByComm.get(x.label)||0)}
     ]);
 
+    const schoolAtt=groupUnique(atts,r=>r.school||'Sin escuela').sort((a,b)=>b.value-a.value).slice(0,10);
+    chart('schoolChart','bar',schoolAtt.map(x=>x.label),[{label:'Asistentes',data:schoolAtt.map(x=>x.value)}],{indexAxis:'y'});
+
+    const venueAtt=groupUnique(atts,r=>r.venue||'Sin sede').sort((a,b)=>b.value-a.value).slice(0,10);
+    chart('venueChart','bar',venueAtt.map(x=>x.label),[{label:'Asistentes',data:venueAtt.map(x=>x.value)}],{indexAxis:'y'});
+
+    const tutorAtt=groupUnique(atts,r=>r.tutor||'Sin tutor').sort((a,b)=>b.value-a.value).slice(0,10);
+    chart('tutorChart','bar',tutorAtt.map(x=>x.label),[{label:'Asistentes',data:tutorAtt.map(x=>x.value)}],{indexAxis:'y'});
+
+    const shiftAtt=groupUnique(atts,r=>r.shift||'Sin turno').sort((a,b)=>b.value-a.value).slice(0,8);
+    chart('shiftChart','doughnut',shiftAtt.map(x=>x.label),[{label:'Asistentes',data:shiftAtt.map(x=>x.value)}]);
+
     const schools=groupUnique(regs,r=>r.school||'Sin escuela').sort((a,b)=>b.value-a.value);
     const attSchool=new Map(groupUnique(atts,r=>r.school||'Sin escuela').map(x=>[x.label,x.value]));
     $('#schoolTable').innerHTML=schools.slice(0,80).map(s=>{const a=attSchool.get(s.label)||0;return `<tr><td>${esc(s.label)}</td><td>${s.value}</td><td>${a}</td><td>${rate(a,s.value).toLocaleString('es-AR')}%</td></tr>`}).join('') || '<tr><td colspan="4" class="empty">Sin datos.</td></tr>';
@@ -321,7 +340,29 @@
   function chart(id,type,labels,datasets,extra={}){
     if(charts[id])charts[id].destroy();
     const ctx=document.getElementById(id); if(!ctx)return;
-    charts[id]=new Chart(ctx,{type,data:{labels,datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'nearest',intersect:false},plugins:{legend:{position:'bottom',labels:{boxWidth:10,usePointStyle:true}}},scales:type==='doughnut'?{}:{x:{grid:{display:false},ticks:{maxRotation:45,minRotation:0}},y:{beginAtZero:true,grid:{color:'#eef1f4'}}},...extra}});
+    const styled=datasets.map((d,i)=>{
+      if(type==='doughnut') return {...d,backgroundColor:labels.map((_,j)=>PALETTE[j%PALETTE.length]),borderWidth:0,hoverOffset:4};
+      if(type==='line') return {...d,borderColor:PALETTE[i%PALETTE.length],backgroundColor:'rgba(22,117,102,.08)',pointBackgroundColor:PALETTE[i%PALETTE.length],pointRadius:3,borderWidth:2.2};
+      return {...d,backgroundColor:PALETTE[i%PALETTE.length],borderRadius:6,borderSkipped:false,maxBarThickness:38};
+    });
+    charts[id]=new Chart(ctx,{
+      type,
+      data:{labels,datasets:styled},
+      options:{
+        responsive:true,
+        maintainAspectRatio:false,
+        interaction:{mode:'nearest',intersect:false},
+        plugins:{
+          legend:{position:'bottom',labels:{boxWidth:8,usePointStyle:true,padding:14,color:'#6d7983',font:{size:10,weight:600}}},
+          tooltip:{backgroundColor:'#10262b',titleColor:'#fff',bodyColor:'#dfe9e7',padding:10,cornerRadius:8}
+        },
+        scales:type==='doughnut'?{}:{
+          x:{grid:{display:false},ticks:{maxRotation:45,minRotation:0,color:'#7a8790',font:{size:9}}},
+          y:{beginAtZero:true,grid:{color:'#edf1f3'},ticks:{color:'#7a8790',font:{size:9}}}
+        },
+        ...extra
+      }
+    });
   }
 
   function renderDetail(){

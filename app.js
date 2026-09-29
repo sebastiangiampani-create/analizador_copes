@@ -2,7 +2,7 @@
   const DB_NAME = 'analizador_copes_v1';
   const STORE = 'state';
   const KEY = 'dataset';
-  const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], imports: [] };
+  const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], imports: [], sources: [] };
   let dataset = structuredClone(EMPTY);
   let charts = {};
   const PALETTE = ['#167566','#2f7fe0','#7b68c7','#d18a3a','#3aa7a0','#7d8c99','#bd6a5a','#5d9b63','#8a6bb8','#c49a3f'];
@@ -39,12 +39,25 @@
   async function loadState(){
     const db=await openDb();
     const value=await new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readonly');const r=tx.objectStore(STORE).get(KEY);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});
-    db.close(); dataset=value || structuredClone(EMPTY);
+    db.close(); dataset={...structuredClone(EMPTY), ...(value || {})};
+    if(!Array.isArray(dataset.sources)) dataset.sources=[];
   }
   async function clearState(){
     const db=await openDb();
     await new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).delete(KEY);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error)});
     db.close(); dataset=structuredClone(EMPTY); renderAll();
+  }
+
+  function spreadsheetIdFromUrl(url=''){
+    return String(url).match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/)?.[1] || '';
+  }
+
+  function sourceAuthLabel(mode){
+    return ({public_link:'Por link',technical_account:'Cuenta técnica',delegated:'Autenticado'})[mode] || mode || '—';
+  }
+
+  function sourceStatusLabel(status){
+    return ({pending_backend:'Pendiente backend',ok:'Sincronizada',error:'Error'})[status] || status || 'Pendiente backend';
   }
 
   function mapRow(row){
@@ -373,8 +386,81 @@
     $('#detailTable').innerHTML=rows.map(r=>`<tr><td>${esc(r.dni||'—')}</td><td>${esc(r.name||r.email||'—')}</td><td><strong>${esc(r.actionCode)}</strong><br><small>${esc(actions.get(r.actionCode)?.title||'')}</small></td><td>${esc(r.school||'—')}</td><td>${esc(r.area||'—')}</td><td>${esc(r.commissionCode||'—')}</td><td>${attSet.has(idOf(r))?'<span class="badge">Sí</span>':'<span class="badge no">No</span>'}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">Sin datos para mostrar.</td></tr>';
   }
 
+  function refreshSourceActionOptions(){
+    const sel=$('#sourceAction'); if(!sel) return;
+    const old=sel.value;
+    sel.innerHTML='<option value="">Seleccionar acción...</option>'+sortAlpha(dataset.actions.map(x=>x.code)).map(code=>`<option value="${esc(code)}">${esc(code)} · ${esc(dataset.actions.find(x=>x.code===code)?.title||'')}</option>`).join('');
+    if([...sel.options].some(o=>o.value===old)) sel.value=old;
+  }
+
+  function renderSources(){
+    if(!$('#sourceTable')) return;
+    refreshSourceActionOptions();
+    const sources=dataset.sources||[];
+    $('#sourceCount').textContent=sources.length.toLocaleString('es-AR');
+    $('#sourceActiveCount').textContent=sources.filter(x=>x.active!==false).length.toLocaleString('es-AR');
+    $('#sourcePendingCount').textContent=sources.filter(x=>x.status==='pending_backend'||!x.status).length.toLocaleString('es-AR');
+
+    $('#sourceTable').innerHTML=sources.slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')).map(s=>{
+      const sid=s.spreadsheetId||spreadsheetIdFromUrl(s.url);
+      const status=s.status||'pending_backend';
+      return `<tr>
+        <td><strong>${esc(s.actionCode||'—')}</strong></td>
+        <td><span class="source-name">${esc(s.name||'Google Sheet')}</span><span class="source-id">${esc(sid||s.url||'')}</span></td>
+        <td>${esc(sourceAuthLabel(s.authMode))}</td>
+        <td>cada ${Number(s.intervalMinutes)||5} min</td>
+        <td><span class="source-status ${status==='ok'?'ok':status==='error'?'error':'pending'}">${esc(sourceStatusLabel(status))}</span></td>
+        <td>${s.lastSyncAt?new Date(s.lastSyncAt).toLocaleString('es-AR'):'—'}</td>
+        <td><button class="source-action-btn" data-remove-source="${esc(s.id)}">Quitar</button></td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="7" class="empty">Todavía no registraste fuentes. Podés asociar el link de cada Google Sheet desde el formulario.</td></tr>';
+
+    $('[data-remove-source]').forEach(btn=>btn.addEventListener('click',async()=>{
+      const id=btn.dataset.removeSource;
+      const src=(dataset.sources||[]).find(x=>x.id===id);
+      if(!src) return;
+      if(!confirm(`¿Quitar la fuente ${src.actionCode||''} de esta configuración local?`)) return;
+      dataset.sources=dataset.sources.filter(x=>x.id!==id);
+      await saveState(); renderSources(); toast('Fuente quitada de la prueba local');
+    }));
+  }
+
+  async function saveSourceFromForm(e){
+    e.preventDefault();
+    const actionCode=$('#sourceAction').value;
+    const url=$('#sourceUrl').value.trim();
+    if(!actionCode){toast('Seleccioná una acción');return}
+    if(!url){toast('Pegá el link de Google Sheets');return}
+    const spreadsheetId=spreadsheetIdFromUrl(url);
+    if(!spreadsheetId){toast('El link no parece ser una Google Sheet válida');return}
+
+    const duplicate=(dataset.sources||[]).find(x=>x.actionCode===actionCode && x.spreadsheetId===spreadsheetId);
+    if(duplicate){toast('Esa fuente ya está registrada para la acción');return}
+
+    const source={
+      id:(globalThis.crypto?.randomUUID?.() || 'src-'+Date.now()),
+      actionCode,
+      name:$('#sourceName').value.trim() || `${actionCode} · Google Sheets`,
+      url,
+      spreadsheetId,
+      authMode:$('#sourceAuthMode').value,
+      intervalMinutes:Number($('#sourceInterval').value)||5,
+      active:true,
+      status:'pending_backend',
+      lastSyncAt:null,
+      createdAt:new Date().toISOString()
+    };
+    dataset.sources=[...(dataset.sources||[]),source];
+    await saveState();
+    $('#sourceForm').reset();
+    refreshSourceActionOptions();
+    $('#sourceInterval').value='5';
+    renderSources();
+    toast('Fuente registrada. Queda lista para conectar al sincronizador.');
+  }
+
   function renderAll(){
-    refreshFilterOptions(); renderImportResults(); applyFilters();
+    refreshFilterOptions(); renderImportResults(); renderSources(); applyFilters();
   }
 
   function switchView(name){
@@ -402,6 +488,7 @@
     $('#clearFilters').addEventListener('click',()=>{['filterAction','filterSchool','filterTutor','filterArea','filterVenue','filterShift'].forEach(id=>$('#'+id).value='');$('#globalSearch').value='';applyFilters()});
     $('#exportBtn').addEventListener('click',exportCsv);
     $('#resetBtn').addEventListener('click',async()=>{if(confirm('¿Vaciar todos los datos de prueba guardados en este navegador?')){await clearState();toast('Datos de prueba eliminados')}});
+    $('#sourceForm')?.addEventListener('submit',saveSourceFromForm);
   }
 
   async function init(){

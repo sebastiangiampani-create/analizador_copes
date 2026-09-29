@@ -23,6 +23,7 @@
       <nav class="nav">
         <button class="nav-item active" data-view="dashboard"><span class="nav-icon">▦</span><span>Panel general</span></button>
         <button class="nav-item" data-view="imports"><span class="nav-icon">⇧</span><span>Cargar bases</span></button>
+        <button class="nav-item" data-view="sources"><span class="nav-icon">↻</span><span>Fuentes</span></button>
         <button class="nav-item" data-view="detail"><span class="nav-icon">≡</span><span>Detalle</span></button>
       </nav>
 
@@ -194,6 +195,97 @@
             <div id="importResults" class="import-results"></div>
           </article>
         </div>
+      </section>
+
+
+      <section id="view-sources" class="view">
+        <div class="page-intro source-page-intro">
+          <span class="section-kicker">FUENTES DINÁMICAS</span>
+          <h2>Google Sheets por acción</h2>
+          <p>Registrá una vez el enlace de cada acción. En producción, el backend sincronizará los cambios con Neon para que todos los usuarios consulten la misma información.</p>
+        </div>
+
+        <div class="source-summary">
+          <article class="source-stat"><span>Fuentes registradas</span><strong id="sourceCount">0</strong></article>
+          <article class="source-stat"><span>Activas</span><strong id="sourceActiveCount">0</strong></article>
+          <article class="source-stat"><span>Pendientes de backend</span><strong id="sourcePendingCount">0</strong></article>
+        </div>
+
+        <div class="source-layout">
+          <article class="panel source-form-panel">
+            <div class="panel-head">
+              <div><h3>Nueva fuente</h3><p>Asociá una Google Sheet con su código principal.</p></div>
+              <span class="panel-chip">Administrador</span>
+            </div>
+
+            <form id="sourceForm" class="source-form">
+              <label class="field">
+                <span>Acción</span>
+                <select id="sourceAction" required></select>
+              </label>
+              <label class="field">
+                <span>Nombre de la fuente</span>
+                <input id="sourceName" type="text" placeholder="Ej. C0832 · inscripción y asistencia" />
+              </label>
+              <label class="field full">
+                <span>Link de Google Sheets</span>
+                <input id="sourceUrl" type="url" placeholder="https://docs.google.com/spreadsheets/d/..." required />
+              </label>
+              <label class="field">
+                <span>Tipo de acceso</span>
+                <select id="sourceAuthMode">
+                  <option value="public_link">Accesible por link</option>
+                  <option value="technical_account">Compartida con cuenta técnica</option>
+                  <option value="delegated">Acceso autenticado delegado</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Sincronizar cada</span>
+                <select id="sourceInterval">
+                  <option value="5">5 minutos</option>
+                  <option value="10">10 minutos</option>
+                  <option value="15">15 minutos</option>
+                  <option value="30">30 minutos</option>
+                  <option value="60">60 minutos</option>
+                </select>
+              </label>
+              <div class="source-note full">
+                <strong>Seguridad:</strong> esta pantalla guarda solamente la configuración local de prueba. Las credenciales nunca deben quedar en GitHub ni en el navegador.
+              </div>
+              <div class="source-form-actions full">
+                <button type="submit" class="btn primary">Registrar fuente</button>
+              </div>
+            </form>
+          </article>
+
+          <article class="panel source-list-panel">
+            <div class="panel-head">
+              <div><h3>Fuentes configuradas</h3><p>Estado de sincronización y asociación por acción.</p></div>
+            </div>
+            <div class="table-scroll source-table-scroll">
+              <table>
+                <thead>
+                  <tr><th>Acción</th><th>Fuente</th><th>Acceso</th><th>Frecuencia</th><th>Estado</th><th>Última sync</th><th></th></tr>
+                </thead>
+                <tbody id="sourceTable"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+
+        <article class="panel architecture-panel">
+          <div class="panel-head">
+            <div><h3>Cómo funcionará en producción</h3><p>Una sola sincronización central para todos los usuarios.</p></div>
+          </div>
+          <div class="flow-line">
+            <span>Google Sheets</span><b>→</b><span>Sincronizador seguro</span><b>→</b><span>Neon PostgreSQL</span><b>→</b><span>Dashboard multiusuario</span>
+          </div>
+          <div class="role-pills">
+            <span>Administrador · configura fuentes y usuarios</span>
+            <span>Analista · consulta y exporta</span>
+            <span>Consulta · solo visualización</span>
+          </div>
+        </article>
       </section>
 
       <section id="view-detail" class="view">

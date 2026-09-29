@@ -172,3 +172,20 @@ tbody tr:hover{background:#f7faf9}
 @media(max-width:1450px){.kpi-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.filter-bar{grid-template-columns:repeat(3,minmax(145px,1fr))}}
 @media(max-width:900px){.filter-title{align-items:flex-start;flex-direction:column}.filter-actions{width:100%}.saved-filter-select{flex:1}.filter-bar{grid-template-columns:repeat(2,minmax(140px,1fr))}.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.filter-bar,.kpi-grid{grid-template-columns:1fr}}
+
+/* Persistencia Supabase */
+.storage-status-btn{font-size:10px;white-space:nowrap}
+.status-card.storage-connected{border-color:#b9d9d0;background:#f1f9f6}
+.status-card.storage-connected .status-dot{background:#1d8b72;box-shadow:0 0 0 4px rgba(29,139,114,.12)}
+.status-card.storage-error{border-color:#efc9c4;background:#fff7f6}
+.status-card.storage-error .status-dot{background:#b64f43}
+.storage-modal{position:fixed;inset:0;z-index:1200;display:grid;place-items:center;padding:22px;background:rgba(12,28,32,.55);backdrop-filter:blur(4px)}
+.storage-modal[hidden]{display:none}
+.storage-modal-card{width:min(410px,100%);background:#fff;border:1px solid var(--line);border-radius:18px;padding:24px;box-shadow:0 24px 70px rgba(0,0,0,.25)}
+.storage-modal-card h3{margin:8px 0 7px;font-size:18px}
+.storage-modal-card p{margin:0 0 16px;color:var(--muted);font-size:11px;line-height:1.55}
+.storage-lock{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:var(--brand-soft);color:var(--brand);font-size:13px}
+.storage-modal-card input{width:100%;border:1px solid var(--line);border-radius:9px;padding:11px 12px;outline:none}
+.storage-modal-card input:focus{border-color:#7da89f;box-shadow:0 0 0 3px rgba(22,117,102,.09)}
+.storage-key-error{min-height:18px;padding-top:6px;color:#9b2c21;font-size:10px}
+.storage-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}

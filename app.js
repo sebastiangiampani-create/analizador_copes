@@ -3,6 +3,11 @@
   const STORE = 'state';
   const KEY = 'dataset';
   const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], imports: [], sources: [], savedFilters: [] };
+  const REMOTE_ENDPOINT = 'https://qchnawvoensqnynsuhfu.supabase.co/functions/v1/copes-state';
+  const REMOTE_KEY_STORAGE = 'analizador_copes_workspace_key_v1';
+  let remoteReady = false;
+  let storageModalResolve = null;
+  let configSaveTimer = null;
   let dataset = structuredClone(EMPTY);
   let charts = {};
   const PALETTE = ['#167566','#2f7fe0','#7b68c7','#d18a3a','#3aa7a0','#7d8c99','#bd6a5a','#5d9b63','#8a6bb8','#c49a3f'];
@@ -47,6 +52,7 @@
     const db=await openDb();
     await new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).put(dataset,KEY);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error)});
     db.close();
+    if(remoteReady) scheduleRemoteConfigSave();
   }
   async function loadState(){
     const db=await openDb();
@@ -59,6 +65,191 @@
     const db=await openDb();
     await new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).delete(KEY);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error)});
     db.close(); dataset=structuredClone(EMPTY); renderAll();
+  }
+
+  function workspaceKey(){ return localStorage.getItem(REMOTE_KEY_STORAGE) || ''; }
+
+  function setStorageUi(mode,detail=''){
+    const title=$('#storageTitle'), text=$('#storageDetail'), btn=$('#storageStatusBtn'), card=$('#storageCard');
+    if(!title || !text || !btn)return;
+    card?.classList.remove('storage-connected','storage-local','storage-error');
+    if(mode==='connected'){
+      title.textContent='Supabase conectado';
+      text.textContent=detail || 'Las cargas quedan guardadas permanentemente.';
+      btn.textContent='Supabase: conectado';
+      card?.classList.add('storage-connected');
+    }else if(mode==='error'){
+      title.textContent='Guardado local';
+      text.textContent=detail || 'No se pudo conectar con Supabase.';
+      btn.textContent='Supabase: reconectar';
+      card?.classList.add('storage-error');
+    }else{
+      title.textContent='Guardado local';
+      text.textContent=detail || 'Conectá Supabase para no perder las cargas.';
+      btn.textContent='Supabase: conectar';
+      card?.classList.add('storage-local');
+    }
+  }
+
+  async function remoteRequest(op,payload={},keyOverride=''){
+    const key=keyOverride || workspaceKey();
+    if(!key) throw new Error('missing_workspace_key');
+    const res=await fetch(REMOTE_ENDPOINT,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-copes-key':key},
+      body:JSON.stringify({op,...payload}),
+      cache:'no-store'
+    });
+    const data=await res.json().catch(()=>({ok:false,error:'invalid_response'}));
+    if(!res.ok || !data.ok) throw new Error(data.error || ('HTTP '+res.status));
+    return data;
+  }
+
+  function openStorageModal(){
+    if(!$('#storageModal')) return Promise.resolve('');
+    if(storageModalResolve) return Promise.resolve('');
+    $('#storageKeyInput').value='';
+    $('#storageKeyError').textContent='';
+    $('#storageModal').hidden=false;
+    setTimeout(()=>$('#storageKeyInput')?.focus(),50);
+    return new Promise(resolve=>{storageModalResolve=resolve});
+  }
+
+  function closeStorageModal(value=''){
+    $('#storageModal').hidden=true;
+    const resolve=storageModalResolve;
+    storageModalResolve=null;
+    if(resolve) resolve(value);
+  }
+
+  async function ensureRemoteAccess({interactive=true}={}){
+    let key=workspaceKey();
+    if(key){
+      try{
+        await remoteRequest('ping',{},key);
+        remoteReady=true;
+        setStorageUi('connected');
+        return true;
+      }catch(e){
+        console.warn('Clave COPES guardada inválida o conexión caída',e);
+        localStorage.removeItem(REMOTE_KEY_STORAGE);
+        key='';
+      }
+    }
+    remoteReady=false;
+    if(!interactive){
+      setStorageUi('local');
+      return false;
+    }
+    const entered=String(await openStorageModal()||'').trim();
+    if(!entered){
+      setStorageUi('local');
+      return false;
+    }
+    try{
+      await remoteRequest('ping',{},entered);
+      localStorage.setItem(REMOTE_KEY_STORAGE,entered);
+      remoteReady=true;
+      setStorageUi('connected');
+      return true;
+    }catch(e){
+      console.error(e);
+      $('#storageKeyError').textContent='La clave no es válida o Supabase no responde.';
+      localStorage.removeItem(REMOTE_KEY_STORAGE);
+      remoteReady=false;
+      setStorageUi('error','Revisá la clave de acceso.');
+      return false;
+    }
+  }
+
+  function buildActionSnapshot(code){
+    const action=dataset.actions.find(x=>x.code===code);
+    if(!action)return null;
+    const importInfo=dataset.imports.find(x=>x.code===code) || {code,title:action.title||code,when:new Date().toISOString()};
+    return {
+      action,
+      proposals:dataset.proposals.filter(x=>x.actionCode===code),
+      registrations:dataset.registrations.filter(x=>x.actionCode===code),
+      attendance:dataset.attendance.filter(x=>x.actionCode===code),
+      importInfo
+    };
+  }
+
+  function applyActionSnapshot(payload){
+    const code=payload?.action?.code;
+    if(!/^C\d{4}$/.test(code||''))return;
+    dataset.actions=dataset.actions.filter(x=>x.code!==code).concat(payload.action);
+    dataset.proposals=dataset.proposals.filter(x=>x.actionCode!==code).concat(payload.proposals||[]);
+    dataset.registrations=dataset.registrations.filter(x=>x.actionCode!==code).concat(payload.registrations||[]);
+    dataset.attendance=dataset.attendance.filter(x=>x.actionCode!==code).concat(payload.attendance||[]);
+    dataset.imports=dataset.imports.filter(x=>x.code!==code).concat(payload.importInfo||{code,title:payload.action.title||code,when:new Date().toISOString()});
+  }
+
+  async function saveRemoteAction(code){
+    if(!remoteReady)return false;
+    const payload=buildActionSnapshot(code);
+    if(!payload)return false;
+    await remoteRequest('save_action',{actionCode:code,payload});
+    return true;
+  }
+
+  async function saveRemoteConfig(){
+    if(!remoteReady)return;
+    await remoteRequest('save_config',{payload:{
+      sources:dataset.sources||[],
+      savedFilters:dataset.savedFilters||[]
+    }});
+  }
+
+  function scheduleRemoteConfigSave(){
+    clearTimeout(configSaveTimer);
+    configSaveTimer=setTimeout(()=>{
+      saveRemoteConfig().catch(e=>{
+        console.error('Error guardando configuración en Supabase',e);
+        remoteReady=false;
+        setStorageUi('error','La copia local sigue disponible; reconectá Supabase.');
+      });
+    },250);
+  }
+
+  async function initRemotePersistence(){
+    const localSnapshots=(dataset.actions||[]).map(a=>buildActionSnapshot(a.code)).filter(Boolean);
+    const localSources=structuredClone(dataset.sources||[]);
+    const localFilters=structuredClone(dataset.savedFilters||[]);
+
+    const connected=await ensureRemoteAccess({interactive:true});
+    if(!connected)return;
+
+    try{
+      const remote=await remoteRequest('load');
+      const rows=remote.actions||[];
+      const remoteCodes=new Set(rows.map(r=>r.action_code));
+      const localOnly=localSnapshots.filter(p=>!remoteCodes.has(p.action.code));
+
+      if(rows.length){
+        dataset=structuredClone(EMPTY);
+        for(const row of rows) applyActionSnapshot(row.payload);
+        for(const p of localOnly){
+          applyActionSnapshot(p);
+          await remoteRequest('save_action',{actionCode:p.action.code,payload:p});
+        }
+        dataset.sources=Array.isArray(remote.config?.sources)?remote.config.sources:localSources;
+        dataset.savedFilters=Array.isArray(remote.config?.savedFilters)?remote.config.savedFilters:localFilters;
+      }else if(localSnapshots.length){
+        for(const p of localSnapshots){
+          await remoteRequest('save_action',{actionCode:p.action.code,payload:p});
+        }
+        await saveRemoteConfig();
+      }
+
+      await saveState();
+      setStorageUi('connected',(dataset.actions.length||0)+' acción(es) persistidas en Supabase.');
+    }catch(e){
+      console.error('Error inicializando persistencia remota',e);
+      remoteReady=false;
+      setStorageUi('error','No se pudo recuperar Supabase. La copia local sigue intacta.');
+      toast('No se pudo conectar con Supabase; se mantiene la copia local.');
+    }
   }
 
   function spreadsheetIdFromUrl(url=''){
@@ -258,6 +449,7 @@
     if(!files.length)return;
     $('#importSummary').textContent='Procesando archivos...';
     const results=[];
+    const successfulCodes=[];
     for(const file of files){
       try{
         const data=await file.arrayBuffer();
@@ -265,6 +457,7 @@
         const parsed=parseWorkbook(file,wb);
         const existed=dataset.actions.some(x=>x.code===parsed.action.code);
         mergeParsed(parsed);
+        successfulCodes.push(parsed.action.code);
         results.push({ok:true,updated:existed,...parsed.importInfo});
       }catch(e){
         console.error('Error importando',file.name,e);
@@ -272,6 +465,23 @@
       }
     }
     await saveState();
+
+    let remoteSaved=0;
+    if(successfulCodes.length){
+      if(!remoteReady) await ensureRemoteAccess({interactive:true});
+      if(remoteReady){
+        for(const code of unique(successfulCodes)){
+          try{ if(await saveRemoteAction(code)) remoteSaved++; }
+          catch(e){
+            console.error('Error guardando '+code+' en Supabase',e);
+            remoteReady=false;
+            setStorageUi('error','La carga quedó local; reconectá para subirla a Supabase.');
+            break;
+          }
+        }
+      }
+    }
+
     renderImportResults(results);
 
     const okCount=results.filter(x=>x.ok).length;
@@ -287,7 +497,8 @@
       const parts=[];
       if(updatedCount)parts.push(updatedCount+' acción(es) actualizada(s)');
       if(newCount)parts.push(newCount+' acción(es) nueva(s)');
-      toast((parts.join(' · ')||okCount+' archivo(s) procesado(s)')+'. Panel actualizado.');
+      const storageMsg=remoteSaved ? ' · guardado en Supabase' : (remoteReady?'':' · copia local');
+      toast((parts.join(' · ')||okCount+' archivo(s) procesado(s)')+storageMsg+'. Panel actualizado.');
     }else{
       renderAll();
       switchView('imports');
@@ -855,13 +1066,45 @@
     $('#deleteFilterBtn').addEventListener('click',deleteSavedFilter);
     $('#clearFilters').addEventListener('click',()=>{['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterDate','filterTutor','filterArea','filterVenue','filterShift','excludeDate'].forEach(id=>$('#'+id).value='');['globalSearch','excludeSurname'].forEach(id=>$('#'+id).value='');$('#savedFilterSelect').value='';$('#deleteFilterBtn').disabled=true;applyFilters()});
     $('#exportBtn').addEventListener('click',exportCsv);
-    $('#resetBtn').addEventListener('click',async()=>{if(confirm('¿Vaciar todos los datos de prueba guardados en este navegador?')){await clearState();toast('Datos de prueba eliminados')}});
+    $('#resetBtn').addEventListener('click',async()=>{
+      if(confirm('¿Limpiar solamente los datos de este navegador? Los datos guardados en Supabase NO se eliminan.')){
+        await clearState();
+        toast('Copia local limpiada. Podés recargar desde Supabase.');
+        if(remoteReady) await initRemotePersistence();
+      }
+    });
+    $('#storageStatusBtn')?.addEventListener('click',async()=>{
+      if(remoteReady){
+        try{
+          const remote=await remoteRequest('load');
+          for(const row of (remote.actions||[])) applyActionSnapshot(row.payload);
+          if(Array.isArray(remote.config?.sources)) dataset.sources=remote.config.sources;
+          if(Array.isArray(remote.config?.savedFilters)) dataset.savedFilters=remote.config.savedFilters;
+          await saveState();renderAll();
+          toast('Datos recargados desde Supabase');
+        }catch(e){
+          console.error(e);remoteReady=false;setStorageUi('error');
+        }
+      }else{
+        const ok=await ensureRemoteAccess({interactive:true});
+        if(ok){await initRemotePersistence();renderAll()}
+      }
+    });
+    $('#storageKeyForm')?.addEventListener('submit',e=>{
+      e.preventDefault();
+      closeStorageModal($('#storageKeyInput').value);
+    });
+    $('#storageKeyCancel')?.addEventListener('click',()=>closeStorageModal(''));
     $('#sourceForm')?.addEventListener('submit',saveSourceFromForm);
     $('#sourceAction')?.addEventListener('input',e=>{e.target.value=e.target.value.toUpperCase().replace(/[^C0-9]/g,'').slice(0,5)});
   }
 
   async function init(){
-    bind(); await loadState(); renderAll(); startSourceAutoSync();
+    bind();
+    await loadState();
+    await initRemotePersistence();
+    renderAll();
+    startSourceAutoSync();
     if(!dataset.actions.length) switchView('imports');
   }
   init();

@@ -29,11 +29,11 @@
 
       <div class="sidebar-spacer"></div>
 
-      <div class="status-card">
-        <span class="status-dot"></span>
+      <div class="status-card" id="storageCard">
+        <span class="status-dot" id="storageDot"></span>
         <div>
-          <strong>Modo local seguro</strong>
-          <p>Los Excel se procesan en este navegador.</p>
+          <strong id="storageTitle">Guardado local</strong>
+          <p id="storageDetail">Conectando con Supabase...</p>
         </div>
       </div>
       <div class="privacy-card">
@@ -51,7 +51,8 @@
         </div>
         <div class="top-actions">
           <button id="exportBtn" class="btn ghost" disabled>Exportar CSV</button>
-          <button id="resetBtn" class="btn danger">Vaciar prueba</button>
+          <button id="storageStatusBtn" class="btn ghost storage-status-btn" type="button">Supabase: conectar</button>
+          <button id="resetBtn" class="btn danger">Limpiar navegador</button>
         </div>
       </header>
 
@@ -320,6 +321,22 @@
         </article>
       </section>
     </main>
+  </div>
+
+  <div id="storageModal" class="storage-modal" hidden>
+    <div class="storage-modal-card">
+      <div class="storage-lock">●</div>
+      <h3>Conectar guardado permanente</h3>
+      <p>Ingresá la clave del Analizador COPES. Se guarda solamente en este navegador y permite recuperar las cargas desde Supabase.</p>
+      <form id="storageKeyForm">
+        <input id="storageKeyInput" type="password" autocomplete="current-password" placeholder="Clave COPES" required />
+        <div id="storageKeyError" class="storage-key-error"></div>
+        <div class="storage-modal-actions">
+          <button id="storageKeyCancel" type="button" class="btn ghost">Ahora no</button>
+          <button type="submit" class="btn primary">Conectar</button>
+        </div>
+      </form>
+    </div>
   </div>
 
   <div id="toast" class="toast"></div>

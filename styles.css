@@ -172,3 +172,28 @@ tbody tr:hover{background:#f7faf9}
 @media(max-width:1450px){.kpi-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.filter-bar{grid-template-columns:repeat(3,minmax(145px,1fr))}}
 @media(max-width:900px){.filter-title{align-items:flex-start;flex-direction:column}.filter-actions{width:100%}.saved-filter-select{flex:1}.filter-bar{grid-template-columns:repeat(2,minmax(140px,1fr))}.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.filter-bar,.kpi-grid{grid-template-columns:1fr}}
+
+/* Google OAuth / sesión */
+.auth-gate{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:24px;background:linear-gradient(135deg,#0d2429 0%,#143b3c 55%,#e9f2ef 160%)}
+.auth-gate[hidden]{display:none}
+.auth-card{width:min(430px,100%);background:#fff;border:1px solid rgba(255,255,255,.4);border-radius:22px;padding:34px;box-shadow:0 28px 80px rgba(0,0,0,.28);text-align:center}
+.auth-logo{width:58px;height:58px;margin:0 auto 18px;border-radius:17px;display:grid;place-items:center;background:var(--brand);color:#fff;font-size:28px;font-weight:950}
+.auth-card h1{margin:7px 0 10px;font-size:27px;letter-spacing:-.7px}
+.auth-card>p{margin:0 auto 21px;max-width:340px;color:var(--muted);font-size:12px;line-height:1.55}
+.google-login-btn{width:100%;border:1px solid #d7dde1;border-radius:11px;background:#fff;color:#263238;padding:12px 14px;display:flex;align-items:center;justify-content:center;gap:10px;font-weight:850;cursor:pointer;box-shadow:0 2px 7px rgba(0,0,0,.05)}
+.google-login-btn:hover{background:#f7f9fa}
+.google-g{font-size:18px;font-weight:900;color:#4285f4}
+.auth-status{min-height:18px!important;margin:14px 0 0!important;font-size:10px!important}
+.auth-status[data-tone="error"]{color:#9b2c21}
+.auth-status[data-tone="ok"]{color:var(--brand)}
+.auth-security{margin-top:15px;padding-top:14px;border-top:1px solid var(--line);font-size:9px;color:#87939a;line-height:1.5}
+body.auth-locked .app-shell{filter:blur(2px);pointer-events:none;user-select:none}
+.user-session{display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:#fff;border-radius:12px;padding:5px 7px 5px 6px}
+.user-avatar{width:30px;height:30px;border-radius:9px;object-fit:cover}
+.user-copy{display:grid;min-width:110px;max-width:180px}
+.user-copy strong{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.user-copy small{font-size:8px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.user-link{border:0;background:#f3f7f6;color:var(--brand-2);border-radius:8px;padding:7px 8px;font-size:9px;font-weight:850;cursor:pointer}
+.user-link.danger-link{color:#8b4a43;background:#faf2f1}
+.source-auth-pill{border:1px solid #dce8e4;background:#f2f8f6;color:var(--brand-2);border-radius:9px;padding:10px 11px;font-size:11px;font-weight:800}
+@media(max-width:900px){.user-copy{display:none}.user-session{gap:4px}.user-link{padding:6px}.top-actions{flex-wrap:wrap}}

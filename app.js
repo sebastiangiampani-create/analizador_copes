@@ -712,6 +712,8 @@
     $('#insightNoShow').textContent=[...regIds].filter(x=>!linkedAttIds.has(x)).length.toLocaleString('es-AR');
     $('#insightSchoolsNoShow').textContent=schoolsReg.filter(x=>x&&!schoolsAtt.has(x)).length.toLocaleString('es-AR');
     $('#exportBtn').disabled=!regs.length;
+    $('#excelBtn').disabled=!regs.length;
+    $('#printBtn').disabled=!regs.length;
 
     const action=$('#filterAction').value;
     const act=dataset.actions.find(x=>x.code===action);
@@ -1102,11 +1104,226 @@
     $('#view-'+name)?.classList.add('active'); document.querySelector(`.nav-item[data-view="${name}"]`)?.classList.add('active');
   }
 
-  function exportCsv(){
-    const rows=filtered.registrations.map(r=>({...r,asistio:filtered.attendance.some(a=>idOf(a)===idOf(r))?'SI':'NO'}));
+  function exportFileStem(){
+    const f=currentFilters();
+    const action=f.action || 'todas';
+    const date=f.date || new Date().toISOString().slice(0,10);
+    return ('COPES_'+action+'_'+date).replace(/[^A-Za-z0-9_-]+/g,'_');
+  }
+
+  function filterSummaryPairs(){
+    const f=currentFilters();
+    const pairs=[
+      ['Acción',f.action],['Escuela',f.school],['Dependencia',f.dependency],
+      ['Sector de gestión',f.sector],['Comuna',f.comuna],['Estado',f.status],
+      ['Fecha de encuentro',f.date?formatDate(f.date):''],['Tutor / capacitador',f.tutor],
+      ['Área',f.area],['Sede',f.venue],['Turno',f.shift],
+      ['Excluir apellido',f.excludeSurname],['Excluir fecha',f.excludeDate?formatDate(f.excludeDate):''],
+      ['Búsqueda',f.q]
+    ];
+    return pairs.filter(([,v])=>String(v||'').trim()!=='');
+  }
+
+  function updatePrintMeta(){
+    if(!$('#printGenerated'))return;
+    $('#printGenerated').textContent='Generado: '+new Date().toLocaleString('es-AR');
+    const pairs=filterSummaryPairs();
+    $('#printFilters').innerHTML=pairs.length
+      ? pairs.map(([k,v])=>'<span><b>'+esc(k)+':</b> '+esc(v)+'</span>').join('')
+      : '<span>Sin filtros adicionales · todas las acciones cargadas</span>';
+  }
+
+  function uniqueFilteredRegistrations(){
+    const byId=new Map();
+    for(const r of filtered.registrations){
+      const key=[r.actionCode,r.commissionCode,idOf(r)].join('|');
+      if(key&&!byId.has(key))byId.set(key,r);
+    }
+    return [...byId.values()];
+  }
+
+  function schoolExportRows(){
+    const regs=filtered.registrations, atts=filtered.attendance;
+    const schools=groupUnique(regs,r=>cueOf(r)).sort((a,b)=>b.value-a.value);
+    const attSchool=new Map(groupUnique(atts,r=>cueOf(r)).map(x=>[x.label,x.value]));
+    const meta=new Map();
+    regs.forEach(r=>{const k=cueOf(r);if(k&&!meta.has(k))meta.set(k,r)});
+    return schools.map(s=>{
+      const m=meta.get(s.label)||{}, a=attSchool.get(s.label)||0;
+      return {
+        CUE:m.cue||'',
+        ESCUELA:upper(m.school)||'',
+        DEPENDENCIA:upper(m.dependency)||'',
+        'SECTOR DE GESTIÓN':upper(m.sector)||'',
+        COMUNA:upper(m.comuna)||'',
+        'INSCRIPTOS ÚNICOS':s.value,
+        'ASISTENTES ÚNICOS':a,
+        'ASISTENCIA %':rate(a,s.value)
+      };
+    });
+  }
+
+  function absentExportRows(){
+    const attIds=new Set(filtered.attendance.map(idOf).filter(Boolean));
+    const byId=new Map();
+    filtered.registrations.filter(r=>!attIds.has(idOf(r))).forEach(r=>{
+      const k=[r.actionCode,r.commissionCode,idOf(r)].join('|');
+      if(k&&!byId.has(k))byId.set(k,r);
+    });
+    return [...byId.values()].map(r=>({
+      DNI:cleanDni(r.dni)||'',
+      DOCENTE:r.name||r.email||'',
+      ACCIÓN:r.actionCode||'',
+      COMISIÓN:r.commissionCode||'',
+      ESCUELA:upper(r.school)||'',
+      CUE:r.cue||'',
+      DEPENDENCIA:upper(r.dependency)||'',
+      'SECTOR DE GESTIÓN':upper(r.sector)||'',
+      COMUNA:upper(r.comuna)||'',
+      ESTADO:upper(statusNorm(r.status))||'',
+      ÁREA:r.area||'',
+      'FECHA INSCRIPCIÓN':formatDate(r.registrationDate)||''
+    }));
+  }
+
+  function detailExportRows(){
+    const attSet=new Set(filtered.attendance.map(idOf).filter(Boolean));
+    return uniqueFilteredRegistrations().map(r=>({
+      DNI:cleanDni(r.dni)||'',
+      DOCENTE:r.name||r.email||'',
+      EMAIL:r.email||'',
+      ACCIÓN:r.actionCode||'',
+      COMISIÓN:r.commissionCode||'',
+      ESCUELA:upper(r.school)||'',
+      CUE:r.cue||'',
+      DEPENDENCIA:upper(r.dependency)||'',
+      'SECTOR DE GESTIÓN':upper(r.sector)||'',
+      COMUNA:upper(r.comuna)||'',
+      ESTADO:upper(statusNorm(r.status))||'',
+      ÁREA:r.area||'',
+      FORMACIÓN:r.formation||'',
+      SEDE:r.venue||'',
+      TURNO:r.shift||'',
+      TUTOR:r.tutor||'',
+      'FECHA INSCRIPCIÓN':formatDate(r.registrationDate)||'',
+      ASISTIÓ:attSet.has(idOf(r))?'SI':'NO'
+    }));
+  }
+
+  function attendanceExportRows(){
+    return filtered.attendance.map(r=>({
+      DNI:cleanDni(r.dni)||'',
+      DOCENTE:r.name||r.email||'',
+      EMAIL:r.email||'',
+      ACCIÓN:r.actionCode||'',
+      COMISIÓN:r.commissionCode||'',
+      ENCUENTRO:r.encounter||'',
+      FECHA:formatDate(r.eventDate)||'',
+      ESCUELA:upper(r.school)||'',
+      CUE:r.cue||'',
+      DEPENDENCIA:upper(r.dependency)||'',
+      'SECTOR DE GESTIÓN':upper(r.sector)||'',
+      COMUNA:upper(r.comuna)||'',
+      ÁREA:r.area||'',
+      SEDE:r.venue||'',
+      TURNO:r.shift||'',
+      TUTOR:r.tutor||''
+    }));
+  }
+
+  function commissionExportRows(){
+    const regs=groupUnique(filtered.registrations,r=>r.commissionCode).sort((a,b)=>b.value-a.value);
+    const attMap=new Map(groupUnique(filtered.attendance,r=>r.commissionCode).map(x=>[x.label,x.value]));
+    const props=new Map(filtered.proposals.map(p=>[p.code,p]));
+    return regs.map(x=>{
+      const p=props.get(x.label)||{}, a=attMap.get(x.label)||0;
+      return {
+        COMISIÓN:x.label,
+        ÁREA:p.area||'',
+        FORMACIÓN:p.formation||'',
+        SEDE:p.venue||'',
+        TURNO:p.shift||'',
+        TUTORES:(p.tutors||[]).join(' · '),
+        INSCRIPTOS:x.value,
+        ASISTENTES:a,
+        'ASISTENCIA %':rate(a,x.value)
+      };
+    });
+  }
+
+  function autoWidth(ws,rows){
     if(!rows.length)return;
-    const ws=XLSX.utils.json_to_sheet(rows); const csv=XLSX.utils.sheet_to_csv(ws);
-    const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='analizador_copes_filtrado.csv';a.click();URL.revokeObjectURL(url);
+    const headers=Object.keys(rows[0]);
+    ws['!cols']=headers.map(h=>({
+      wch:Math.min(45,Math.max(10,h.length+2,...rows.slice(0,300).map(r=>String(r[h]??'').length+2)))
+    }));
+    ws['!autofilter']={ref:ws['!ref']};
+  }
+
+  function appendJsonSheet(wb,name,rows){
+    const safeRows=rows.length?rows:[{INFO:'Sin datos para los filtros actuales'}];
+    const ws=XLSX.utils.json_to_sheet(safeRows);
+    autoWidth(ws,safeRows);
+    XLSX.utils.book_append_sheet(wb,ws,name.slice(0,31));
+  }
+
+  function exportExcel(){
+    const regs=filtered.registrations, atts=filtered.attendance;
+    if(!regs.length && !atts.length)return;
+
+    const regIds=new Set(regs.map(idOf).filter(Boolean));
+    const attIds=new Set(atts.map(idOf).filter(Boolean));
+    const metrics=eventMetrics(regs,atts);
+    const filters=filterSummaryPairs();
+    const currentDate=$('#filterDate').value;
+    const currentMetric=currentDate?metrics.find(x=>x.date===currentDate):(metrics.at(-1)||null);
+
+    const summary=[
+      {INDICADOR:'Generado',VALOR:new Date().toLocaleString('es-AR')},
+      ...filters.map(([k,v])=>({INDICADOR:'Filtro · '+k,VALOR:v})),
+      {INDICADOR:'Docentes inscriptos únicos',VALOR:regIds.size},
+      {INDICADOR:'Docentes asistentes únicos',VALOR:attIds.size},
+      {INDICADOR:'Asistencia %',VALOR:rate([...attIds].filter(x=>regIds.has(x)).length,regIds.size)},
+      {INDICADOR:'Presentismo %',VALOR:currentMetric?.presentism??''},
+      {INDICADOR:'Escuelas representadas',VALOR:unique(regs.map(cueOf)).length},
+      {INDICADOR:'Comisiones',VALOR:unique(regs.map(x=>x.commissionCode)).length},
+      {INDICADOR:'Registros de asistencia',VALOR:atts.length}
+    ];
+
+    const wb=XLSX.utils.book_new();
+    appendJsonSheet(wb,'Resumen',summary);
+    appendJsonSheet(wb,'Por fecha',metrics.map(x=>({
+      FECHA:formatDate(x.date),ACTIVOS:x.active,'ASISTENTES ÚNICOS':x.attendees,'PRESENTISMO %':x.presentism
+    })));
+    appendJsonSheet(wb,'Comisiones',commissionExportRows());
+    appendJsonSheet(wb,'Escuelas',schoolExportRows());
+    appendJsonSheet(wb,'Ausentes',absentExportRows());
+    appendJsonSheet(wb,'Detalle',detailExportRows());
+    appendJsonSheet(wb,'Asistencias',attendanceExportRows());
+
+    XLSX.writeFile(wb,exportFileStem()+'.xlsx',{compression:true});
+    toast('Excel exportado con los filtros actuales');
+  }
+
+  function printDashboard(){
+    if(!filtered.registrations.length && !filtered.attendance.length)return;
+    updatePrintMeta();
+    switchView('dashboard');
+    requestAnimationFrame(()=>setTimeout(()=>window.print(),100));
+  }
+
+  function exportCsv(){
+    const rows=detailExportRows();
+    if(!rows.length)return;
+    const ws=XLSX.utils.json_to_sheet(rows);
+    const csv=XLSX.utils.sheet_to_csv(ws);
+    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download=exportFileStem()+'_detalle.csv';
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   function bind(){
@@ -1125,7 +1342,10 @@
     $('#saveFilterBtn').addEventListener('click',saveCurrentFilter);
     $('#deleteFilterBtn').addEventListener('click',deleteSavedFilter);
     $('#clearFilters').addEventListener('click',()=>{['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterDate','filterTutor','filterArea','filterVenue','filterShift','excludeDate'].forEach(id=>$('#'+id).value='');['globalSearch','excludeSurname'].forEach(id=>$('#'+id).value='');$('#savedFilterSelect').value='';$('#deleteFilterBtn').disabled=true;applyFilters()});
+    $('#printBtn').addEventListener('click',printDashboard);
+    $('#excelBtn').addEventListener('click',exportExcel);
     $('#exportBtn').addEventListener('click',exportCsv);
+    window.addEventListener('beforeprint',updatePrintMeta);
     $('#resetBtn').addEventListener('click',async()=>{
       if(confirm('¿Limpiar solamente los datos de este navegador? Los datos guardados en Supabase NO se eliminan.')){
         await clearState();

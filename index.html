@@ -50,13 +50,19 @@
           <p id="subtitle">Carga una base para empezar a analizar.</p>
         </div>
         <div class="top-actions">
-          <button id="exportBtn" class="btn ghost" disabled>Exportar CSV</button>
+          <button id="printBtn" class="btn ghost" disabled>Imprimir / PDF</button>
+          <button id="excelBtn" class="btn ghost" disabled>Exportar Excel</button>
+          <button id="exportBtn" class="btn ghost" disabled>CSV detalle</button>
           <button id="storageStatusBtn" class="btn ghost storage-status-btn" type="button">Supabase: conectar</button>
           <button id="resetBtn" class="btn danger">Limpiar navegador</button>
         </div>
       </header>
 
       <section id="view-dashboard" class="view active">
+        <div id="printMeta" class="print-meta">
+          <div><strong>Analizador COPES</strong><span id="printGenerated"></span></div>
+          <div id="printFilters"></div>
+        </div>
         <div class="filter-shell">
           <div class="filter-title">
             <div>

@@ -189,3 +189,42 @@ tbody tr:hover{background:#f7faf9}
 .storage-modal-card input:focus{border-color:#7da89f;box-shadow:0 0 0 3px rgba(22,117,102,.09)}
 .storage-key-error{min-height:18px;padding-top:6px;color:#9b2c21;font-size:10px}
 .storage-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+
+/* Impresión y exportación */
+.print-meta{display:none}
+@media print{
+  @page{size:A4 landscape;margin:9mm}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  body{background:#fff!important}
+  .sidebar,.top-actions,.filter-shell,.toast,.storage-modal{display:none!important}
+  .app-shell{display:block!important}
+  .main{padding:0!important;max-width:none!important}
+  .topbar{display:block!important;margin:0 0 7mm!important;padding:0 0 4mm!important;border-bottom:1px solid #d9e0e3}
+  .title-block .eyebrow{font-size:8pt}
+  .title-block h1{font-size:18pt;margin:2mm 0 1mm}
+  .title-block p{font-size:9pt}
+  .view{display:none!important}
+  #view-dashboard{display:block!important}
+  .print-meta{display:flex!important;justify-content:space-between;gap:8mm;align-items:flex-start;margin-bottom:5mm;padding:3mm 4mm;border:1px solid #dfe6e8;border-radius:3mm;background:#fafcfc}
+  .print-meta>div:first-child{display:grid;gap:1mm;min-width:42mm}
+  .print-meta strong{font-size:11pt}
+  .print-meta span{font-size:7.5pt;color:#53636b}
+  #printFilters{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:2mm 4mm}
+  #printFilters span{white-space:nowrap}
+  .kpi-grid{grid-template-columns:repeat(4,1fr)!important;gap:3mm!important}
+  .kpi{box-shadow:none!important;border:1px solid #dfe6e8!important;min-height:auto!important;padding:3mm!important}
+  .kpi strong{font-size:17pt!important}
+  .insight-strip{grid-template-columns:repeat(3,1fr)!important;gap:3mm!important}
+  .chart-grid,.compact-grid,.table-grid{grid-template-columns:repeat(2,1fr)!important;gap:4mm!important}
+  .panel,.panel.wide{grid-column:auto!important;box-shadow:none!important;border:1px solid #dfe6e8!important;break-inside:avoid;page-break-inside:avoid;padding:3mm!important}
+  .hero-chart,.chart-grid>.wide{grid-column:1/-1!important}
+  .chart-wrap{height:58mm!important}
+  .chart-wrap.tall{height:68mm!important}
+  .section-heading{margin:7mm 0 3mm!important;break-after:avoid}
+  .section-heading h2{font-size:13pt!important}
+  .table-scroll,.detail-table,.source-table-scroll{max-height:none!important;overflow:visible!important}
+  table{font-size:7pt!important}
+  th,td{padding:1.7mm 1.5mm!important}
+  th{position:static!important}
+  .source-summary,.source-layout,.architecture-panel{display:none!important}
+}

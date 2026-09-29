@@ -543,15 +543,13 @@
     };
   }
   function rowDate(r){ return r.eventDate || r.registrationDate || r.capturedAt || ''; }
-  function matches(r,f){
+  function matchesBase(r,f){
     if(f.action && r.actionCode!==f.action)return false;
     if(f.school && r.school!==f.school)return false;
     if(f.dependency && r.dependency!==f.dependency)return false;
     if(f.sector && r.sector!==f.sector)return false;
     if(f.comuna && r.comuna!==f.comuna)return false;
     if(f.status && statusNorm(r.status)!==f.status)return false;
-    if(f.date && rowDate(r)!==f.date)return false;
-    if(f.excludeDate && rowDate(r)===f.excludeDate)return false;
     if(f.excludeSurname && normalize(r.name).includes(f.excludeSurname))return false;
     if(f.tutor && !String(r.tutor||'').includes(f.tutor))return false;
     if(f.area && r.area!==f.area)return false;
@@ -563,32 +561,62 @@
     }
     return true;
   }
+  function matchesRegistration(r,f){
+    if(!matchesBase(r,f))return false;
+    // FECHA del tablero representa el encuentro. Para el padrón de inscriptos
+    // se conserva a quienes estaban activos en esa fecha, no solo a quienes se inscribieron ese día.
+    if(f.date && !activeAtDate(r,f.date))return false;
+    return true;
+  }
+  function matchesAttendance(r,f){
+    if(!matchesBase(r,f))return false;
+    if(f.date && r.eventDate!==f.date)return false;
+    if(f.excludeDate && r.eventDate===f.excludeDate)return false;
+    return true;
+  }
 
   function refreshFilterOptions(){
     fillSelect($('#filterAction'),dataset.actions.map(x=>x.code),'Todas');
-    const regs=dataset.registrations;
+    const action=$('#filterAction')?.value || '';
+    const regs=action ? dataset.registrations.filter(x=>x.actionCode===action) : dataset.registrations;
+    const props=action ? dataset.proposals.filter(x=>x.actionCode===action) : dataset.proposals;
     fillSelect($('#filterSchool'),regs.map(x=>x.school));
     fillSelect($('#filterDependency'),regs.map(x=>x.dependency));
     fillSelect($('#filterSector'),regs.map(x=>x.sector));
     fillSelect($('#filterComuna'),regs.map(x=>x.comuna));
     fillSelect($('#filterStatus'),regs.map(x=>statusNorm(x.status)).filter(Boolean));
-    fillSelect($('#filterTutor'),dataset.proposals.flatMap(x=>x.tutors||[]));
-    fillSelect($('#filterArea'),regs.map(x=>x.area).concat(dataset.proposals.map(x=>x.area)));
-    fillSelect($('#filterVenue'),regs.map(x=>x.venue).concat(dataset.proposals.map(x=>x.venue)));
-    fillSelect($('#filterShift'),regs.map(x=>x.shift).concat(dataset.proposals.map(x=>x.shift)));
+    fillSelect($('#filterTutor'),props.flatMap(x=>x.tutors||[]));
+    fillSelect($('#filterArea'),regs.map(x=>x.area).concat(props.map(x=>x.area)));
+    fillSelect($('#filterVenue'),regs.map(x=>x.venue).concat(props.map(x=>x.venue)));
+    fillSelect($('#filterShift'),regs.map(x=>x.shift).concat(props.map(x=>x.shift)));
     renderSavedFilters();
   }
 
   function applyFilters(){
     const f=currentFilters();
-    filtered.registrations=dataset.registrations.filter(r=>matches(r,f));
-    filtered.attendance=dataset.attendance.filter(r=>matches(r,f));
+    filtered.registrations=dataset.registrations.filter(r=>matchesRegistration(r,f));
+    filtered.attendance=dataset.attendance.filter(r=>matchesAttendance(r,f));
+
+    // Las propuestas/comisiones deben quedar acotadas a lo que sobrevivió
+    // a los filtros de personas (escuela, dependencia, comuna, estado, etc.).
+    const scopedCommissionCodes=new Set(
+      filtered.registrations.map(r=>r.commissionCode)
+        .concat(filtered.attendance.map(r=>r.commissionCode))
+        .filter(Boolean)
+    );
+
     filtered.proposals=dataset.proposals.filter(p=>{
       if(f.action && p.actionCode!==f.action)return false;
       if(f.tutor && !(p.tutors||[]).includes(f.tutor))return false;
       if(f.area && p.area!==f.area)return false;
       if(f.venue && p.venue!==f.venue)return false;
       if(f.shift && p.shift!==f.shift)return false;
+
+      const hasPeopleLevelFilter=!!(
+        f.school || f.dependency || f.sector || f.comuna || f.status ||
+        f.date || f.excludeDate || f.excludeSurname || f.q
+      );
+      if(hasPeopleLevelFilter && !scopedCommissionCodes.has(p.code))return false;
       return true;
     });
     renderDashboard(); renderDetail();
@@ -1062,7 +1090,8 @@
     ['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('drag')}));
     ['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove('drag')}));
     dz.addEventListener('drop',e=>handleFiles([...e.dataTransfer.files]));
-    ['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterDate','filterTutor','filterArea','filterVenue','filterShift','excludeDate'].forEach(id=>$('#'+id).addEventListener('change',applyFilters));
+    ['filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterDate','filterTutor','filterArea','filterVenue','filterShift','excludeDate'].forEach(id=>$('#'+id).addEventListener('change',applyFilters));
+    $('#filterAction').addEventListener('change',()=>{refreshFilterOptions();applyFilters()});
     ['globalSearch','excludeSurname'].forEach(id=>$('#'+id).addEventListener('input',applyFilters));
     $('#detailSearch').addEventListener('input',renderDetail);
     $('#savedFilterSelect').addEventListener('change',()=>{const id=$('#savedFilterSelect').value;$('#deleteFilterBtn').disabled=!id;const f=(dataset.savedFilters||[]).find(x=>x.id===id);if(f)applyFilterSnapshot(f.config)});

@@ -59,8 +59,29 @@
     }
   }
 
+  async function googleProviderEnabled(){
+    try{
+      const res=await fetch(CONFIG.supabaseUrl+'/auth/v1/settings',{
+        headers:{apikey:CONFIG.publishableKey},
+        cache:'no-store'
+      });
+      const data=await res.json();
+      return !!data?.external?.google;
+    }catch(e){
+      console.warn('No pude verificar Google Auth',e);
+      return false;
+    }
+  }
+
   async function signIn(){
     if(!client) await init();
+    const enabled=await googleProviderEnabled();
+    if(!enabled){
+      authMessage('Falta activar Google en Supabase. Configurá Client ID y Client Secret en Authentication → Providers → Google.','error');
+      const help=$('#googleSetupHelp');
+      if(help) help.hidden=false;
+      return;
+    }
     authMessage('Abriendo Google…');
     const {error}=await client.auth.signInWithOAuth({
       provider:'google',
@@ -118,6 +139,10 @@
       $('#logoutBtn')?.addEventListener('click',signOut);
       $('#reconnectGoogleBtn')?.addEventListener('click',signIn);
 
+      const enabled=await googleProviderEnabled();
+      const help=$('#googleSetupHelp');
+      if(help) help.hidden=enabled;
+      if(!enabled && !session) authMessage('Falta activar Google en Supabase.','error');
       updateUi();
       return session;
     })();

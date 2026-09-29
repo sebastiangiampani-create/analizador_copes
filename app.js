@@ -66,11 +66,11 @@
   }
 
   function sourceAuthLabel(mode){
-    return ({google_oauth:'Google',public_link:'Por link',technical_account:'Cuenta técnica',delegated:'Autenticado'})[mode] || mode || 'Google';
+    return ({public_link:'Por link',technical_account:'Cuenta técnica',delegated:'Autenticado'})[mode] || mode || '—';
   }
 
   function sourceStatusLabel(status){
-    return ({pending_backend:'Pendiente',auth_required:'Reconectar Google',syncing:'Sincronizando',ok:'Sincronizada',error:'Error'})[status] || status || 'Pendiente';
+    return ({pending_backend:'Pendiente',syncing:'Sincronizando',ok:'Sincronizada',error:'Error'})[status] || status || 'Pendiente';
   }
 
   function mapRow(row){
@@ -611,12 +611,38 @@
   }
 
   async function workbookFromGoogleSource(source){
-    if(!globalThis.COPES_AUTH?.isSignedIn()) throw new Error('Ingresá con Google para sincronizar.');
-    if(!globalThis.COPES_AUTH?.hasGoogleToken()) throw new Error('Reconectá Google para autorizar la lectura de Sheets.');
-    const result=await globalThis.COPES_AUTH.workbookFromGoogleSheet(source.url);
-    source.googleSheetTitle=result.title || source.googleSheetTitle || '';
-    source.detectedTabs=result.discovered || [];
-    return result.workbook;
+    const spreadsheetId=source.spreadsheetId||spreadsheetIdFromUrl(source.url);
+    if(!spreadsheetId) throw new Error('Link de Google Sheets inválido.');
+    const wb=XLSX.utils.book_new();
+    let found=0;
+    const messages=[];
+
+    for(const sheetName of ['Propuestas','Inscripciones','Asistencias']){
+      try{
+        const rows=await loadGvizSheet(spreadsheetId,{sheet:sheetName});
+        if(rows.length){
+          XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),sheetName);
+          found++;
+        }
+      }catch(e){ messages.push(e?.message||String(e)); }
+    }
+
+    if(!found){
+      const gid=gidFromSheetUrl(source.url);
+      if(gid){
+        try{
+          const rows=await loadGvizSheet(spreadsheetId,{gid});
+          const kind=classifySheetRows(rows);
+          if(kind && rows.length){
+            XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),kind);
+            found++;
+          }
+        }catch(e){ messages.push(e?.message||String(e)); }
+      }
+    }
+
+    if(!found) throw new Error(messages.join(' · ') || 'No pude leer Propuestas, Inscripciones ni Asistencias.');
+    return wb;
   }
 
   function detectActionCodeFromWorkbook(wb){
@@ -637,22 +663,14 @@
   async function syncSourceNow(sourceId,{silent=false}={}){
     const src=(dataset.sources||[]).find(x=>x.id===sourceId);
     if(!src || src.status==='syncing') return;
-    if(!globalThis.COPES_AUTH?.isSignedIn()){
-      src.status='auth_required';
-      src.lastSyncMessage='Ingresá con Google para sincronizar.';
+    if(src.authMode!=='public_link'){
+      src.status='error';
+      src.lastSyncMessage='La fuente está configurada como privada/autenticada. Para este modo hace falta una cuenta técnica.';
       await saveState(); renderSources();
-      if(!silent)toast('Ingresá con Google');
-      return;
-    }
-    if(!globalThis.COPES_AUTH?.hasGoogleToken()){
-      src.status='auth_required';
-      src.lastSyncMessage='Reconectá Google para renovar el permiso de lectura.';
-      await saveState(); renderSources();
-      if(!silent)toast('Reconectá Google para leer la Sheet');
+      if(!silent)toast('La fuente requiere acceso autenticado');
       return;
     }
 
-    src.authMode='google_oauth';
     src.status='syncing';
     src.lastSyncMessage='Leyendo Google Sheets...';
     renderSources();
@@ -682,9 +700,8 @@
       }
     }catch(e){
       console.error('Error sincronizando Google Sheets',e);
-      const msg=e?.message||'No se pudo sincronizar.';
-      src.status=/Reconect|Ingresá con Google|permiso de Google/i.test(msg)?'auth_required':'error';
-      src.lastSyncMessage=msg;
+      src.status='error';
+      src.lastSyncMessage=e?.message||'No se pudo sincronizar.';
       await saveState();
       renderSources();
       if(!silent)toast('No se pudo sincronizar '+src.actionCode);
@@ -694,8 +711,7 @@
   function startSourceAutoSync(){
     const runDue=()=>{
       const now=Date.now();
-      if(!globalThis.COPES_AUTH?.isSignedIn() || !globalThis.COPES_AUTH?.hasGoogleToken())return;
-      (dataset.sources||[]).filter(s=>s.active!==false).forEach(s=>{
+      (dataset.sources||[]).filter(s=>s.active!==false && s.authMode==='public_link').forEach(s=>{
         const intervalMs=(Number(s.intervalMinutes)||5)*60000;
         const last=s.lastSyncAt ? new Date(s.lastSyncAt).getTime() : 0;
         const pending=!s.lastSyncAt || s.status==='pending_backend' || !s.status;
@@ -712,7 +728,7 @@
     const sources=dataset.sources||[];
     $('#sourceCount').textContent=sources.length.toLocaleString('es-AR');
     $('#sourceActiveCount').textContent=sources.filter(x=>x.active!==false).length.toLocaleString('es-AR');
-    $('#sourcePendingCount').textContent=sources.filter(x=>x.status==='pending_backend'||x.status==='auth_required'||!x.status).length.toLocaleString('es-AR');
+    $('#sourcePendingCount').textContent=sources.filter(x=>x.status==='pending_backend'||!x.status).length.toLocaleString('es-AR');
 
     $('#sourceTable').innerHTML=sources.slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')).map(s=>{
       const sid=s.spreadsheetId||spreadsheetIdFromUrl(s.url);
@@ -758,7 +774,7 @@
       name:$('#sourceName').value.trim() || `${actionCode} · Google Sheets`,
       url,
       spreadsheetId,
-      authMode:'google_oauth',
+      authMode:$('#sourceAuthMode').value,
       intervalMinutes:Number($('#sourceInterval').value)||5,
       active:true,
       status:'pending_backend',
@@ -779,8 +795,12 @@
     $('#sourceInterval').value='5';
     renderSources();
     refreshFilterOptions();
-    toast('Link registrado. Sincronizando '+actionCode+' con Google...');
-    await syncSourceNow(source.id);
+    if(source.authMode==='public_link'){
+      toast('Link registrado. Sincronizando '+actionCode+'...');
+      await syncSourceNow(source.id);
+    }else{
+      toast('Link registrado para '+actionCode+'. Requiere acceso autenticado.');
+    }
   }
 
   function renderAll(){
@@ -821,14 +841,7 @@
   }
 
   async function init(){
-    await globalThis.COPES_AUTH?.init();
-    bind();
-    await loadState();
-    (dataset.sources||[]).forEach(s=>{
-      if(!s.authMode || ['public_link','technical_account','delegated'].includes(s.authMode)) s.authMode='google_oauth';
-    });
-    renderAll();
-    startSourceAutoSync();
+    bind(); await loadState(); renderAll(); startSourceAutoSync();
     if(!dataset.actions.length) switchView('imports');
   }
   init();

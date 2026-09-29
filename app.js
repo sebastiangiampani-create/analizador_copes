@@ -166,8 +166,13 @@
     const action=dataset.actions.find(x=>x.code===code);
     if(!action)return null;
     const importInfo=dataset.imports.find(x=>x.code===code) || {code,title:action.title||code,when:new Date().toISOString()};
+    const normalizedAction={
+      ...action,
+      status:action.status==='finalizada'?'finalizada':'activa',
+      finalizedAt:action.status==='finalizada'?(action.finalizedAt||null):null
+    };
     return {
-      action,
+      action:normalizedAction,
       proposals:dataset.proposals.filter(x=>x.actionCode===code),
       registrations:dataset.registrations.filter(x=>x.actionCode===code),
       attendance:dataset.attendance.filter(x=>x.actionCode===code),
@@ -178,7 +183,12 @@
   function applyActionSnapshot(payload){
     const code=payload?.action?.code;
     if(!/^C\d{4}$/.test(code||''))return;
-    dataset.actions=dataset.actions.filter(x=>x.code!==code).concat(payload.action);
+    const action={
+      ...payload.action,
+      status:payload.action?.status==='finalizada'?'finalizada':'activa',
+      finalizedAt:payload.action?.status==='finalizada'?(payload.action?.finalizedAt||null):null
+    };
+    dataset.actions=dataset.actions.filter(x=>x.code!==code).concat(action);
     dataset.proposals=dataset.proposals.filter(x=>x.actionCode!==code).concat(payload.proposals||[]);
     dataset.registrations=dataset.registrations.filter(x=>x.actionCode!==code).concat(payload.registrations||[]);
     dataset.attendance=dataset.attendance.filter(x=>x.actionCode!==code).concat(payload.attendance||[]);
@@ -437,6 +447,12 @@
   function dedupe(rows,keyFn){const m=new Map();for(const r of rows){const k=keyFn(r);if(k)m.set(k,r)}return [...m.values()]}
   function mergeParsed(p){
     const code=p.action.code;
+    const previousAction=dataset.actions.find(x=>x.code===code);
+    p.action={
+      ...p.action,
+      status:previousAction?.status==='finalizada'?'finalizada':'activa',
+      finalizedAt:previousAction?.status==='finalizada'?(previousAction.finalizedAt||null):null
+    };
     dataset.actions=dataset.actions.filter(x=>x.code!==code).concat(p.action);
     dataset.proposals=dataset.proposals.filter(x=>x.actionCode!==code).concat(p.proposals);
     dataset.registrations=dataset.registrations.filter(x=>x.actionCode!==code).concat(dedupe(p.registrations,r=>[r.actionCode,r.commissionCode,idOf(r)].join('|')));
@@ -516,7 +532,21 @@
       const warns=(r.mismatches||[]).map(w=>`<div class="warning">Código distinto detectado: <strong>${esc(w.found)}</strong> en ${esc(w.sheet)} / ${esc(w.column)} (${w.count} registro(s)). No se usa como código principal.</div>`).join('');
       const badge=r.updated?'Actualizada':'Nueva';
       const when=r.when?new Date(r.when).toLocaleString('es-AR'):'';
-      return `<div class="import-card"><div class="row"><div><span class="import-code">${esc(r.code)}</span> · <strong>${esc(r.title)}</strong></div><span class="badge">${badge}</span></div><div class="import-meta">${r.proposals||0} comisiones · ${r.registrations||0} inscripciones · ${r.attendance||0} asistencias${when?' · '+esc(when):''}</div>${warns}</div>`;
+      const action=dataset.actions.find(a=>a.code===r.code)||{};
+      const isFinal=action.status==='finalizada';
+      const statusLabel=isFinal?'FINALIZADA':'ACTIVA';
+      const finalized=isFinal&&action.finalizedAt?' · finalizada '+new Date(action.finalizedAt).toLocaleString('es-AR'):'';
+      return `<div class="import-card">
+        <div class="row">
+          <div><span class="import-code">${esc(r.code)}</span> · <strong>${esc(r.title)}</strong></div>
+          <div class="action-card-badges"><span class="action-status-badge ${isFinal?'finished':'active'}">${statusLabel}</span><span class="badge">${badge}</span></div>
+        </div>
+        <div class="import-meta">${r.proposals||0} comisiones · ${r.registrations||0} inscripciones · ${r.attendance||0} asistencias${when?' · '+esc(when):''}${esc(finalized)}</div>
+        <div class="action-card-controls">
+          <button type="button" class="btn ghost compact" data-toggle-action-status="${esc(r.code)}">${isFinal?'Reabrir acción':'Marcar como finalizada'}</button>
+        </div>
+        ${warns}
+      </div>`;
     }).join('');
   }
 
@@ -600,7 +630,16 @@
   }
 
   function refreshFilterOptions(){
-    fillSelect($('#filterAction'),dataset.actions.map(x=>x.code),'Todas');
+    const actionSelect=$('#filterAction');
+    const oldAction=actionSelect?.value||'';
+    if(actionSelect){
+      actionSelect.innerHTML='<option value="">Todas</option>'+sortAlpha(dataset.actions.map(x=>x.code)).map(code=>{
+        const a=dataset.actions.find(x=>x.code===code)||{};
+        const state=a.status==='finalizada'?'Finalizada':'Activa';
+        return `<option value="${esc(code)}">${esc(code)} · ${state}</option>`;
+      }).join('');
+      if([...actionSelect.options].some(o=>o.value===oldAction))actionSelect.value=oldAction;
+    }
     const action=$('#filterAction')?.value || '';
     const regs=action ? dataset.registrations.filter(x=>x.actionCode===action) : dataset.registrations;
     const props=action ? dataset.proposals.filter(x=>x.actionCode===action) : dataset.proposals;
@@ -614,6 +653,64 @@
     fillSelect($('#filterVenue'),regs.map(x=>x.venue).concat(props.map(x=>x.venue)));
     fillSelect($('#filterShift'),regs.map(x=>x.shift).concat(props.map(x=>x.shift)));
     renderSavedFilters();
+  }
+
+  function selectedAction(){
+    const code=$('#filterAction')?.value||'';
+    return code?dataset.actions.find(x=>x.code===code):null;
+  }
+
+  function renderActionLifecycle(){
+    const bar=$('#actionLifecycleBar');
+    if(!bar)return;
+    const action=selectedAction();
+    if(!action){
+      bar.hidden=true;
+      return;
+    }
+    const isFinal=action.status==='finalizada';
+    bar.hidden=false;
+    $('#actionLifecycleName').textContent=(action.code||'')+(action.title?' · '+action.title:'');
+    const badge=$('#actionLifecycleBadge');
+    badge.textContent=isFinal?'FINALIZADA':'ACTIVA';
+    badge.className='action-status-badge '+(isFinal?'finished':'active');
+    $('#actionLifecycleDate').textContent=isFinal&&action.finalizedAt
+      ? 'Finalizada: '+new Date(action.finalizedAt).toLocaleString('es-AR')
+      : 'La acción continúa abierta.';
+    $('#toggleActionStatusBtn').textContent=isFinal?'Reabrir acción':'Marcar como finalizada';
+  }
+
+  async function toggleActionStatus(code=''){
+    const actionCode=code||$('#filterAction')?.value||'';
+    const action=dataset.actions.find(x=>x.code===actionCode);
+    if(!action)return;
+    const closing=action.status!=='finalizada';
+    const promptText=closing
+      ? `¿Marcar ${actionCode} como FINALIZADA? Los datos no se borran y la acción se puede reabrir.`
+      : `¿Reabrir ${actionCode}?`;
+    if(!confirm(promptText))return;
+
+    action.status=closing?'finalizada':'activa';
+    action.finalizedAt=closing?new Date().toISOString():null;
+    await saveState();
+
+    if(!remoteReady) await ensureRemoteAccess({interactive:true});
+    if(remoteReady){
+      try{
+        await saveRemoteAction(actionCode);
+        toast(closing?'Acción finalizada y guardada en Supabase':'Acción reabierta y guardada en Supabase');
+      }catch(e){
+        console.error('No se pudo guardar el estado de la acción en Supabase',e);
+        toast('El estado quedó local; reconectá Supabase para persistirlo.');
+      }
+    }else{
+      toast('El estado quedó local; conectá Supabase para persistirlo.');
+    }
+
+    renderImportResults();
+    refreshFilterOptions();
+    if($('#filterAction'))$('#filterAction').value=actionCode;
+    applyFilters();
   }
 
   function applyFilters(){
@@ -646,7 +743,7 @@
       if(hasPeopleLevelFilter && !scopedCommissionCodes.has(p.code))return false;
       return true;
     });
-    renderDashboard(); renderDetail();
+    renderDashboard(); renderDetail(); renderActionLifecycle();
   }
 
   function filterSnapshot(){ return {...currentFilters()}; }
@@ -717,7 +814,9 @@
 
     const action=$('#filterAction').value;
     const act=dataset.actions.find(x=>x.code===action);
-    $('#subtitle').textContent=act ? `${act.code} · ${act.title}` : (dataset.actions.length ? `${dataset.actions.length} acciones cargadas · filtros interactivos` : 'Carga una base para empezar a analizar.');
+    $('#subtitle').textContent=act
+      ? `${act.code} · ${act.title} · ${act.status==='finalizada'?'FINALIZADA':'ACTIVA'}`
+      : (dataset.actions.length ? `${dataset.actions.length} acciones cargadas · filtros interactivos` : 'Carga una base para empezar a analizar.');
 
     const metrics=eventMetrics(regs,atts);
     const selectedDate=$('#filterDate').value;
@@ -1280,6 +1379,10 @@
 
     const summary=[
       {INDICADOR:'Generado',VALOR:new Date().toLocaleString('es-AR')},
+      ...(selectedAction()?[
+        {INDICADOR:'Estado de la acción',VALOR:selectedAction().status==='finalizada'?'FINALIZADA':'ACTIVA'},
+        {INDICADOR:'Fecha de finalización',VALOR:selectedAction().finalizedAt?new Date(selectedAction().finalizedAt).toLocaleString('es-AR'):''}
+      ]:[]),
       ...filters.map(([k,v])=>({INDICADOR:'Filtro · '+k,VALOR:v})),
       {INDICADOR:'Docentes inscriptos únicos',VALOR:regIds.size},
       {INDICADOR:'Docentes asistentes únicos',VALOR:attIds.size},
@@ -1375,6 +1478,11 @@
       closeStorageModal($('#storageKeyInput').value);
     });
     $('#storageKeyCancel')?.addEventListener('click',()=>closeStorageModal(''));
+    $('#toggleActionStatusBtn')?.addEventListener('click',()=>toggleActionStatus());
+    $('#importResults')?.addEventListener('click',e=>{
+      const btn=e.target.closest('[data-toggle-action-status]');
+      if(btn)toggleActionStatus(btn.dataset.toggleActionStatus);
+    });
     $('#sourceForm')?.addEventListener('submit',saveSourceFromForm);
     $('#sourceAction')?.addEventListener('input',e=>{e.target.value=e.target.value.toUpperCase().replace(/[^C0-9]/g,'').slice(0,5)});
   }

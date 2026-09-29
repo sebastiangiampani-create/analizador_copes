@@ -92,6 +92,15 @@
             <label>Excluir fecha<input id="excludeDate" type="date" /></label>
             <label class="search-label">Buscar<input id="globalSearch" type="search" placeholder="DNI, escuela, docente, tutor..." /></label>
           </div>
+          <div id="actionLifecycleBar" class="action-lifecycle-bar" hidden>
+            <div>
+              <span class="action-lifecycle-label">Estado de la acción</span>
+              <strong id="actionLifecycleName"></strong>
+              <span id="actionLifecycleBadge" class="action-status-badge active">ACTIVA</span>
+              <small id="actionLifecycleDate"></small>
+            </div>
+            <button id="toggleActionStatusBtn" type="button" class="btn ghost compact">Marcar como finalizada</button>
+          </div>
         </div>
 
         <div class="kpi-grid">

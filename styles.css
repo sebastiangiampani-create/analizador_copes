@@ -228,3 +228,18 @@ tbody tr:hover{background:#f7faf9}
   th{position:static!important}
   .source-summary,.source-layout,.architecture-panel{display:none!important}
 }
+
+/* Estado de las acciones */
+.action-lifecycle-bar{margin-top:11px;padding:10px 12px;border:1px solid #dce5e3;border-radius:11px;background:#f8fbfa;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.action-lifecycle-bar[hidden]{display:none}
+.action-lifecycle-bar>div{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.action-lifecycle-label{font-size:9px;font-weight:900;letter-spacing:.55px;color:#7b8891;text-transform:uppercase}
+.action-lifecycle-bar strong{font-size:11px}
+.action-lifecycle-bar small{font-size:9px;color:var(--muted)}
+.action-status-badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 8px;font-size:8px;font-weight:950;letter-spacing:.35px}
+.action-status-badge.active{background:#e8f4f1;color:#176653}
+.action-status-badge.finished{background:#e8edf0;color:#53636b}
+.action-card-badges{display:flex;align-items:center;gap:6px}
+.action-card-controls{display:flex;justify-content:flex-end;margin-top:8px}
+@media(max-width:700px){.action-lifecycle-bar{align-items:flex-start;flex-direction:column}.action-lifecycle-bar .btn{width:100%}}
+@media print{.action-lifecycle-bar{display:none!important}}

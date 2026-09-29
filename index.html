@@ -236,12 +236,12 @@
 
             <form id="sourceForm" class="source-form">
               <label class="field">
-                <span>Acción</span>
-                <select id="sourceAction" required></select>
+                <span>Código de acción</span>
+                <input id="sourceAction" type="text" inputmode="text" autocomplete="off" placeholder="Ej. C0832" maxlength="12" required />
               </label>
               <label class="field">
-                <span>Nombre de la fuente</span>
-                <input id="sourceName" type="text" placeholder="Ej. C0832 · inscripción y asistencia" />
+                <span>Nombre / descripción</span>
+                <input id="sourceName" type="text" placeholder="Ej. Secundaria Aprende Agosto 2026" />
               </label>
               <label class="field full">
                 <span>Link de Google Sheets</span>
@@ -269,7 +269,7 @@
                 <strong>Seguridad:</strong> esta pantalla guarda solamente la configuración local de prueba. Las credenciales nunca deben quedar en GitHub ni en el navegador.
               </div>
               <div class="source-form-actions full">
-                <button type="submit" class="btn primary">Registrar fuente</button>
+                <button type="submit" class="btn primary">Registrar link</button>
               </div>
             </form>
           </article>

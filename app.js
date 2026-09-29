@@ -521,10 +521,8 @@
   }
 
   function refreshSourceActionOptions(){
-    const sel=$('#sourceAction'); if(!sel) return;
-    const old=sel.value;
-    sel.innerHTML='<option value="">Seleccionar acción...</option>'+sortAlpha(dataset.actions.map(x=>x.code)).map(code=>`<option value="${esc(code)}">${esc(code)} · ${esc(dataset.actions.find(x=>x.code===code)?.title||'')}</option>`).join('');
-    if([...sel.options].some(o=>o.value===old)) sel.value=old;
+    const input=$('#sourceAction'); if(!input) return;
+    input.value=String(input.value||'').toUpperCase();
   }
 
   function renderSources(){
@@ -561,9 +559,9 @@
 
   async function saveSourceFromForm(e){
     e.preventDefault();
-    const actionCode=$('#sourceAction').value;
+    const actionCode=String($('#sourceAction').value||'').trim().toUpperCase();
     const url=$('#sourceUrl').value.trim();
-    if(!actionCode){toast('Seleccioná una acción');return}
+    if(!/^C\d{4}$/.test(actionCode)){toast('Ingresá un código válido, por ejemplo C0832');return}
     if(!url){toast('Pegá el link de Google Sheets');return}
     const spreadsheetId=spreadsheetIdFromUrl(url);
     if(!spreadsheetId){toast('El link no parece ser una Google Sheet válida');return}
@@ -585,12 +583,20 @@
       createdAt:new Date().toISOString()
     };
     dataset.sources=[...(dataset.sources||[]),source];
+    if(!dataset.actions.some(a=>a.code===actionCode)){
+      dataset.actions.push({
+        code:actionCode,
+        title:$('#sourceName').value.trim() || actionCode,
+        year:new Date().getFullYear(),
+        source:'Google Sheets'
+      });
+    }
     await saveState();
     $('#sourceForm').reset();
-    refreshSourceActionOptions();
     $('#sourceInterval').value='5';
     renderSources();
-    toast('Fuente registrada. Queda lista para conectar al sincronizador.');
+    refreshFilterOptions();
+    toast('Link registrado para '+actionCode);
   }
 
   function renderAll(){
@@ -627,6 +633,7 @@
     $('#exportBtn').addEventListener('click',exportCsv);
     $('#resetBtn').addEventListener('click',async()=>{if(confirm('¿Vaciar todos los datos de prueba guardados en este navegador?')){await clearState();toast('Datos de prueba eliminados')}});
     $('#sourceForm')?.addEventListener('submit',saveSourceFromForm);
+    $('#sourceAction')?.addEventListener('input',e=>{e.target.value=e.target.value.toUpperCase().replace(/[^C0-9]/g,'').slice(0,5)});
   }
 
   async function init(){

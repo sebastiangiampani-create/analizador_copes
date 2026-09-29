@@ -575,6 +575,30 @@
     return true;
   }
 
+  function buildRegistrationIndex(){
+    const exact=new Map(), byActionPerson=new Map();
+    for(const r of dataset.registrations){
+      const person=idOf(r);
+      if(!person)continue;
+      exact.set([r.actionCode,r.commissionCode,person].join('|'),r);
+      const k=[r.actionCode,person].join('|');
+      if(!byActionPerson.has(k))byActionPerson.set(k,r);
+    }
+    return {exact,byActionPerson};
+  }
+
+  function enrichAttendanceFromRegistration(r,index){
+    const person=idOf(r);
+    const reg=index.exact.get([r.actionCode,r.commissionCode,person].join('|'))
+      || index.byActionPerson.get([r.actionCode,person].join('|'));
+    if(!reg)return r;
+    const out={...r};
+    for(const key of ['school','cue','dependency','sector','comuna','status','region','area','formation','venue','shift','tutor']){
+      if(out[key]===null || out[key]===undefined || String(out[key]).trim()==='') out[key]=reg[key]||'';
+    }
+    return out;
+  }
+
   function refreshFilterOptions(){
     fillSelect($('#filterAction'),dataset.actions.map(x=>x.code),'Todas');
     const action=$('#filterAction')?.value || '';
@@ -594,8 +618,11 @@
 
   function applyFilters(){
     const f=currentFilters();
+    const registrationIndex=buildRegistrationIndex();
     filtered.registrations=dataset.registrations.filter(r=>matchesRegistration(r,f));
-    filtered.attendance=dataset.attendance.filter(r=>matchesAttendance(r,f));
+    filtered.attendance=dataset.attendance
+      .map(r=>enrichAttendanceFromRegistration(r,registrationIndex))
+      .filter(r=>matchesAttendance(r,f));
 
     // Las propuestas/comisiones deben quedar acotadas a lo que sobrevivió
     // a los filtros de personas (escuela, dependencia, comuna, estado, etc.).

@@ -193,17 +193,17 @@
         <div class="page-intro">
           <span class="section-kicker">IMPORTACIÓN</span>
           <h2>Cargar nuevas bases</h2>
-          <p>Arrastrá una o varias acciones. El sistema detecta el código, normaliza columnas y consolida la información.</p>
+          <p>Arrastrá una o varias acciones. Si el código ya existe, se actualiza esa acción automáticamente sin borrar las demás.</p>
         </div>
         <div class="import-layout">
           <article class="panel upload-panel">
             <div id="dropzone" class="dropzone">
               <div class="drop-icon">⇧</div>
               <h2>Cargar bases</h2>
-              <p>Excel o CSV. Podés cargar varias acciones en una misma operación.</p>
+              <p>Excel o CSV. No hace falta borrar la carga anterior: al volver a subir C0832, C0855, etc., se reemplaza solamente esa acción.</p>
               <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" multiple hidden />
               <button id="pickFiles" class="btn primary">Elegir archivos</button>
-              <small>La importación se procesa localmente antes de persistir datos.</small>
+              <small>Podés elegir nuevamente el mismo archivo actualizado. El sistema reemplaza la versión anterior por código de acción.</small>
             </div>
           </article>
           <article class="panel">

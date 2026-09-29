@@ -250,7 +250,8 @@
     dataset.proposals=dataset.proposals.filter(x=>x.actionCode!==code).concat(p.proposals);
     dataset.registrations=dataset.registrations.filter(x=>x.actionCode!==code).concat(dedupe(p.registrations,r=>[r.actionCode,r.commissionCode,idOf(r)].join('|')));
     dataset.attendance=dataset.attendance.filter(x=>x.actionCode!==code).concat(dedupe(p.attendance,r=>[r.actionCode,r.commissionCode,idOf(r),r.encounter,r.eventDate,r.capturedAt].join('|')));
-    dataset.imports=dataset.imports.filter(x=>x.code!==code).concat({...p.importInfo,when:new Date().toISOString()});
+    const existedImport=dataset.imports.some(x=>x.code===code);
+    dataset.imports=dataset.imports.filter(x=>x.code!==code).concat({...p.importInfo,updated:existedImport,when:new Date().toISOString()});
   }
 
   async function handleFiles(files){
@@ -262,8 +263,9 @@
         const data=await file.arrayBuffer();
         const wb=XLSX.read(data,{type:'array',cellDates:true});
         const parsed=parseWorkbook(file,wb);
+        const existed=dataset.actions.some(x=>x.code===parsed.action.code);
         mergeParsed(parsed);
-        results.push({ok:true,...parsed.importInfo});
+        results.push({ok:true,updated:existed,...parsed.importInfo});
       }catch(e){
         console.error('Error importando',file.name,e);
         results.push({ok:false,file:file.name,error:e.message});
@@ -280,7 +282,12 @@
       if($('#deleteFilterBtn'))$('#deleteFilterBtn').disabled=true;
       renderAll();
       switchView('dashboard');
-      toast(okCount+' archivo(s) cargado(s). Panel actualizado.');
+      const updatedCount=results.filter(x=>x.ok&&x.updated).length;
+      const newCount=okCount-updatedCount;
+      const parts=[];
+      if(updatedCount)parts.push(updatedCount+' acción(es) actualizada(s)');
+      if(newCount)parts.push(newCount+' acción(es) nueva(s)');
+      toast((parts.join(' · ')||okCount+' archivo(s) procesado(s)')+'. Panel actualizado.');
     }else{
       renderAll();
       switchView('imports');
@@ -296,7 +303,9 @@
     host.innerHTML=results.slice().reverse().map(r=>{
       if(r.ok===false) return `<div class="import-card"><strong>${esc(r.file)}</strong><div class="warning">${esc(r.error)}</div></div>`;
       const warns=(r.mismatches||[]).map(w=>`<div class="warning">Código distinto detectado: <strong>${esc(w.found)}</strong> en ${esc(w.sheet)} / ${esc(w.column)} (${w.count} registro(s)). No se usa como código principal.</div>`).join('');
-      return `<div class="import-card"><div class="row"><div><span class="import-code">${esc(r.code)}</span> · <strong>${esc(r.title)}</strong></div><span class="badge">Procesado</span></div><div class="import-meta">${r.proposals||0} comisiones · ${r.registrations||0} inscripciones · ${r.attendance||0} asistencias</div>${warns}</div>`;
+      const badge=r.updated?'Actualizada':'Nueva';
+      const when=r.when?new Date(r.when).toLocaleString('es-AR'):'';
+      return `<div class="import-card"><div class="row"><div><span class="import-code">${esc(r.code)}</span> · <strong>${esc(r.title)}</strong></div><span class="badge">${badge}</span></div><div class="import-meta">${r.proposals||0} comisiones · ${r.registrations||0} inscripciones · ${r.attendance||0} asistencias${when?' · '+esc(when):''}</div>${warns}</div>`;
     }).join('');
   }
 

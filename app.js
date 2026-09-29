@@ -2,7 +2,7 @@
   const DB_NAME = 'analizador_copes_v1';
   const STORE = 'state';
   const KEY = 'dataset';
-  const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], imports: [], sources: [] };
+  const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], imports: [], sources: [], savedFilters: [] };
   let dataset = structuredClone(EMPTY);
   let charts = {};
   const PALETTE = ['#167566','#2f7fe0','#7b68c7','#d18a3a','#3aa7a0','#7d8c99','#bd6a5a','#5d9b63','#8a6bb8','#c49a3f'];
@@ -17,7 +17,19 @@
   const num = (v) => Number(String(v ?? '').replace(',','.')) || 0;
   const unique = (arr) => [...new Set(arr.filter(v => v !== null && v !== undefined && String(v).trim() !== '').map(v => String(v).trim()))];
   const sortAlpha = (arr) => arr.sort((a,b) => a.localeCompare(b,'es',{numeric:true,sensitivity:'base'}));
-  const idOf = (r) => String(r.dni || r.email || r.name || '').trim().toLowerCase();
+  const cleanDni = (v='') => String(v ?? '').replace(/\D+/g,'').trim();
+  const idOf = (r) => {
+    const dni=cleanDni(r?.dni);
+    return dni ? 'dni:'+dni : String(r?.email || r?.name || '').trim().toLowerCase();
+  };
+  const cueOf = (r) => String(r?.cue || '').trim() || ('school:'+normalize(r?.school||''));
+  const statusNorm = (v='') => {
+    const n=normalize(v);
+    if(n.includes('baja') || n.includes('inactivo')) return 'Baja';
+    if(n.includes('activo') || n.includes('alta')) return 'Activo';
+    return String(v||'').trim();
+  };
+  const upper = (v='') => String(v||'').trim().toUpperCase();
 
   function toast(msg){
     const el = $('#toast'); el.textContent = msg; el.classList.add('show');
@@ -41,6 +53,7 @@
     const value=await new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readonly');const r=tx.objectStore(STORE).get(KEY);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});
     db.close(); dataset={...structuredClone(EMPTY), ...(value || {})};
     if(!Array.isArray(dataset.sources)) dataset.sources=[];
+    if(!Array.isArray(dataset.savedFilters)) dataset.savedFilters=[];
   }
   async function clearState(){
     const db=await openDb();
@@ -69,10 +82,14 @@
   }
   function formatDate(v){
     if(!v) return '';
-    const d = v instanceof Date ? v : new Date(v);
+    const s=String(v).trim();
+    const iso=s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if(iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
+    if(v instanceof Date && !Number.isNaN(v.getTime())) return v.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric'});
+    const d = new Date(v);
     if(!Number.isNaN(d.getTime())) return d.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric'});
-    const s=String(v); const m=s.match(/(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?/);
-    if(m) return [m[1].padStart(2,'0'),m[2].padStart(2,'0'),m[3] ? String(m[3]).slice(-4) : ''].filter(Boolean).join('/');
+    const m=s.match(/(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?/);
+    if(m) return [m[1].padStart(2,'0'),m[2].padStart(2,'0'),m[3] ? (m[3].length===2?'20'+m[3]:m[3]) : ''].filter(Boolean).join('/');
     return s;
   }
   function isoDate(v, year){
@@ -151,15 +168,21 @@
         cuil:String(pick(m,['Cuil','CUIL'])||'').trim(),
         name:[pick(m,['Nombre','Nombre/s']),pick(m,['Apellido','Apellido/s'])].filter(Boolean).join(' ').trim(),
         email:String(pick(m,['Correo','Email'])||'').trim(),
-        school,
-        dependency:String(pick(m,['Dep. Fun','Dependencia'])||parseDependencyFromSchool(schoolRaw)||'').trim(),
+        school:String(pick(m,['ESCUELA','Escuela','Establecimiento','Escuela / Establecimiento'])||school||'').trim(),
+        cue:String(pick(m,['CUE','Codigo CUE','Código CUE'])||'').trim(),
+        dependency:String(pick(m,['DEPENDENCIA','Dependencia','Dep. Fun'])||parseDependencyFromSchool(schoolRaw)||'').trim(),
+        sector:String(pick(m,['SECTOR DE GESTIÓN','Sector de Gestión','Sector de Gestion','Sector Gestión'])||'').trim(),
+        comuna:String(pick(m,['COMUNA','Comuna'])||'').trim(),
+        status:statusNorm(pick(m,['ESTADO','Estado'])||'Activo'),
+        statusDate:isoDate(pick(m,['FECHA ESTADO','Fecha Estado','Fecha de Estado']),year),
+        bajaDate:isoDate(pick(m,['FECHA BAJA','Fecha Baja','Fecha de Baja']),year),
         region:String(pick(m,['DE','DE/Región','DE o Región'])||'').trim(),
         area:String(pick(m,['Area','Área'])||p?.area||'').trim(),
         formation:String(pick(m,['Formación','Formacion','Tipo de Formación'])||p?.formation||'').trim(),
         venue:String(pick(m,['Sede'])||p?.venue||'').trim(),
         shift:String(pick(m,['Turno'])||p?.shift||'').trim(),
         tutor:(p?.tutors||[]).join(' · '),
-        registrationDate:isoDate(pick(m,['Fecha y hora','Fecha']),year),
+        registrationDate:isoDate(pick(m,['FECHA','Fecha','Fecha y hora']),year),
         source:file.name
       };
     }).filter(r=>idOf(r));
@@ -182,8 +205,12 @@
         dni:String(pick(m,['DNI'])||'').replace(/\.0$/,'').trim(),
         name:[pick(m,['Nombre','Nombre/s']),pick(m,['Apellido','Apellido/s'])].filter(Boolean).join(' ').trim(),
         email:String(pick(m,['Correo','Email'])||'').trim(),
-        school:cleanSchool(schoolRaw),
-        dependency:String(pick(m,['Dep. Fun','Dependencia'])||parseDependencyFromSchool(schoolRaw)||'').trim(),
+        school:String(pick(m,['ESCUELA','Escuela','Establecimiento','Escuela / Establecimiento'])||cleanSchool(schoolRaw)||'').trim(),
+        cue:String(pick(m,['CUE','Codigo CUE','Código CUE'])||'').trim(),
+        dependency:String(pick(m,['DEPENDENCIA','Dependencia','Dep. Fun'])||parseDependencyFromSchool(schoolRaw)||'').trim(),
+        sector:String(pick(m,['SECTOR DE GESTIÓN','Sector de Gestión','Sector de Gestion','Sector Gestión'])||'').trim(),
+        comuna:String(pick(m,['COMUNA','Comuna'])||'').trim(),
+        status:statusNorm(pick(m,['ESTADO','Estado'])||''),
         region:String(pick(m,['DE/Región','DE','DE o Región'])||'').trim(),
         area:String(pick(m,['Area','Área'])||p?.area||'').trim(),
         formation:String(pick(m,['Formación','Formacion','Tipo de Formación'])||p?.formation||'').trim(),
@@ -192,7 +219,7 @@
         tutor:(p?.tutors||[]).join(' · '),
         encounter:encounter || (p?.meetings?.[0]?.label || ''),
         eventDate,
-        capturedAt:isoDate(pick(m,['Fecha y hora','Fecha']),year),
+        capturedAt:isoDate(pick(m,['FECHA','Fecha','Fecha y hora']),year),
         source:file.name
       };
     }).filter(r=>idOf(r));
@@ -259,11 +286,42 @@
   }
 
   function currentFilters(){
-    return {action:$('#filterAction').value,school:$('#filterSchool').value,tutor:$('#filterTutor').value,area:$('#filterArea').value,venue:$('#filterVenue').value,shift:$('#filterShift').value,q:normalize($('#globalSearch').value)};
+    return {
+      action:$('#filterAction').value,
+      school:$('#filterSchool').value,
+      dependency:$('#filterDependency').value,
+      sector:$('#filterSector').value,
+      comuna:$('#filterComuna').value,
+      status:$('#filterStatus').value,
+      date:$('#filterDate').value,
+      tutor:$('#filterTutor').value,
+      area:$('#filterArea').value,
+      venue:$('#filterVenue').value,
+      shift:$('#filterShift').value,
+      excludeSurname:normalize($('#excludeSurname').value),
+      excludeDate:$('#excludeDate').value,
+      q:normalize($('#globalSearch').value)
+    };
   }
+  function rowDate(r){ return r.eventDate || r.registrationDate || r.capturedAt || ''; }
   function matches(r,f){
-    if(f.action && r.actionCode!==f.action)return false;if(f.school && r.school!==f.school)return false;if(f.tutor && !String(r.tutor||'').includes(f.tutor))return false;if(f.area && r.area!==f.area)return false;if(f.venue && r.venue!==f.venue)return false;if(f.shift && r.shift!==f.shift)return false;
-    if(f.q){const hay=normalize([r.dni,r.name,r.email,r.school,r.dependency,r.region,r.area,r.commissionCode,r.tutor,r.venue].join(' '));if(!hay.includes(f.q))return false}
+    if(f.action && r.actionCode!==f.action)return false;
+    if(f.school && r.school!==f.school)return false;
+    if(f.dependency && r.dependency!==f.dependency)return false;
+    if(f.sector && r.sector!==f.sector)return false;
+    if(f.comuna && r.comuna!==f.comuna)return false;
+    if(f.status && statusNorm(r.status)!==f.status)return false;
+    if(f.date && rowDate(r)!==f.date)return false;
+    if(f.excludeDate && rowDate(r)===f.excludeDate)return false;
+    if(f.excludeSurname && normalize(r.name).includes(f.excludeSurname))return false;
+    if(f.tutor && !String(r.tutor||'').includes(f.tutor))return false;
+    if(f.area && r.area!==f.area)return false;
+    if(f.venue && r.venue!==f.venue)return false;
+    if(f.shift && r.shift!==f.shift)return false;
+    if(f.q){
+      const hay=normalize([r.dni,r.name,r.email,r.school,r.cue,r.dependency,r.sector,r.comuna,r.status,rowDate(r),r.region,r.area,r.commissionCode,r.tutor,r.venue].join(' '));
+      if(!hay.includes(f.q))return false;
+    }
     return true;
   }
 
@@ -271,10 +329,15 @@
     fillSelect($('#filterAction'),dataset.actions.map(x=>x.code),'Todas');
     const regs=dataset.registrations;
     fillSelect($('#filterSchool'),regs.map(x=>x.school));
+    fillSelect($('#filterDependency'),regs.map(x=>x.dependency));
+    fillSelect($('#filterSector'),regs.map(x=>x.sector));
+    fillSelect($('#filterComuna'),regs.map(x=>x.comuna));
+    fillSelect($('#filterStatus'),regs.map(x=>statusNorm(x.status)).filter(Boolean));
     fillSelect($('#filterTutor'),dataset.proposals.flatMap(x=>x.tutors||[]));
     fillSelect($('#filterArea'),regs.map(x=>x.area).concat(dataset.proposals.map(x=>x.area)));
     fillSelect($('#filterVenue'),regs.map(x=>x.venue).concat(dataset.proposals.map(x=>x.venue)));
     fillSelect($('#filterShift'),regs.map(x=>x.shift).concat(dataset.proposals.map(x=>x.shift)));
+    renderSavedFilters();
   }
 
   function applyFilters(){
@@ -282,15 +345,62 @@
     filtered.registrations=dataset.registrations.filter(r=>matches(r,f));
     filtered.attendance=dataset.attendance.filter(r=>matches(r,f));
     filtered.proposals=dataset.proposals.filter(p=>{
-      if(f.action && p.actionCode!==f.action)return false;if(f.tutor && !(p.tutors||[]).includes(f.tutor))return false;if(f.area && p.area!==f.area)return false;if(f.venue && p.venue!==f.venue)return false;if(f.shift && p.shift!==f.shift)return false;return true;
+      if(f.action && p.actionCode!==f.action)return false;
+      if(f.tutor && !(p.tutors||[]).includes(f.tutor))return false;
+      if(f.area && p.area!==f.area)return false;
+      if(f.venue && p.venue!==f.venue)return false;
+      if(f.shift && p.shift!==f.shift)return false;
+      return true;
     });
     renderDashboard(); renderDetail();
+  }
+
+  function filterSnapshot(){ return {...currentFilters()}; }
+  function applyFilterSnapshot(f={}){
+    const map={action:'filterAction',school:'filterSchool',dependency:'filterDependency',sector:'filterSector',comuna:'filterComuna',status:'filterStatus',date:'filterDate',tutor:'filterTutor',area:'filterArea',venue:'filterVenue',shift:'filterShift',excludeSurname:'excludeSurname',excludeDate:'excludeDate',q:'globalSearch'};
+    for(const [k,id] of Object.entries(map)){const el=$('#'+id); if(el) el.value=f[k]||''}
+    applyFilters();
+  }
+  function renderSavedFilters(){
+    const sel=$('#savedFilterSelect'); if(!sel)return;
+    const old=sel.value;
+    sel.innerHTML='<option value="">Filtro guardado...</option>'+(dataset.savedFilters||[]).map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+    if((dataset.savedFilters||[]).some(x=>x.id===old))sel.value=old;
+    $('#deleteFilterBtn').disabled=!sel.value;
+  }
+  async function saveCurrentFilter(){
+    const name=prompt('Nombre para este filtro:');
+    if(!name?.trim())return;
+    const item={id:(globalThis.crypto?.randomUUID?.()||'flt-'+Date.now()),name:name.trim(),config:filterSnapshot(),createdAt:new Date().toISOString()};
+    dataset.savedFilters=[...(dataset.savedFilters||[]).filter(x=>normalize(x.name)!==normalize(item.name)),item];
+    await saveState(); renderSavedFilters(); $('#savedFilterSelect').value=item.id; $('#deleteFilterBtn').disabled=false; toast('Filtro guardado');
+  }
+  async function deleteSavedFilter(){
+    const id=$('#savedFilterSelect').value;if(!id)return;
+    dataset.savedFilters=(dataset.savedFilters||[]).filter(x=>x.id!==id);
+    await saveState();renderSavedFilters();toast('Filtro eliminado');
   }
 
   function groupUnique(rows,labelFn,idFn=idOf){
     const m=new Map();for(const r of rows){const k=labelFn(r)||'Sin dato';if(!m.has(k))m.set(k,new Set());const id=idFn(r);if(id)m.get(k).add(id)}return [...m.entries()].map(([label,s])=>({label,value:s.size}));
   }
   function rate(a,b){return b?Math.round(a/b*1000)/10:0}
+  function activeAtDate(r,date){
+    const st=statusNorm(r.status);
+    if(!date) return st!=='Baja';
+    if(r.registrationDate && r.registrationDate>date) return false;
+    if(r.bajaDate) return date < r.bajaDate;
+    if(st==='Baja') return false;
+    return true;
+  }
+  function eventMetrics(regs,atts){
+    const dates=unique(atts.map(x=>x.eventDate).filter(Boolean)).sort();
+    return dates.map(date=>{
+      const attendees=new Set(atts.filter(a=>a.eventDate===date).map(idOf).filter(Boolean));
+      const active=new Set(regs.filter(r=>activeAtDate(r,date)).map(idOf).filter(Boolean));
+      return {date,attendees:attendees.size,active:active.size,presentism:rate([...attendees].filter(x=>active.has(x)).length,active.size)};
+    });
+  }
 
   function renderDashboard(){
     const regs=filtered.registrations, atts=filtered.attendance;
@@ -298,12 +408,12 @@
     $('#kpiRegistered').textContent=regIds.size.toLocaleString('es-AR');
     $('#kpiAttendees').textContent=attIds.size.toLocaleString('es-AR');
     $('#kpiRate').textContent=rate([...attIds].filter(x=>regIds.has(x)).length,regIds.size).toLocaleString('es-AR')+'%';
-    $('#kpiSchools').textContent=unique(regs.map(x=>x.school)).length.toLocaleString('es-AR');
+    $('#kpiSchools').textContent=unique(regs.map(cueOf)).length.toLocaleString('es-AR');
     $('#kpiCommissions').textContent=unique(regs.map(x=>x.commissionCode)).length.toLocaleString('es-AR');
     $('#kpiAttendanceRows').textContent=atts.length.toLocaleString('es-AR');
     const linkedAttIds=new Set([...attIds].filter(x=>regIds.has(x)));
-    const schoolsReg=unique(regs.map(x=>x.school));
-    const schoolsAtt=new Set(atts.map(x=>x.school).filter(Boolean));
+    const schoolsReg=unique(regs.map(cueOf));
+    const schoolsAtt=new Set(atts.map(cueOf).filter(Boolean));
     $('#insightActions').textContent=unique(regs.map(x=>x.actionCode).concat(atts.map(x=>x.actionCode))).length.toLocaleString('es-AR');
     $('#insightNoShow').textContent=[...regIds].filter(x=>!linkedAttIds.has(x)).length.toLocaleString('es-AR');
     $('#insightSchoolsNoShow').textContent=schoolsReg.filter(x=>x&&!schoolsAtt.has(x)).length.toLocaleString('es-AR');
@@ -313,9 +423,22 @@
     const act=dataset.actions.find(x=>x.code===action);
     $('#subtitle').textContent=act ? `${act.code} · ${act.title}` : (dataset.actions.length ? `${dataset.actions.length} acciones cargadas · filtros interactivos` : 'Carga una base para empezar a analizar.');
 
-    const byEvent=groupUnique(atts,r=>r.eventDate ? formatDate(r.eventDate) : (r.encounter||'Sin fecha'));
-    byEvent.sort((a,b)=>a.label.localeCompare(b.label,'es',{numeric:true}));
-    chart('attendanceChart','line',byEvent.map(x=>x.label),[{label:'Asistentes únicos',data:byEvent.map(x=>x.value),tension:.28,fill:false}]);
+    const metrics=eventMetrics(regs,atts);
+    const selectedDate=$('#filterDate').value;
+    const currentMetric=selectedDate ? metrics.find(x=>x.date===selectedDate) : metrics.at(-1);
+    $('#kpiPresentism').textContent=currentMetric ? currentMetric.presentism.toLocaleString('es-AR')+'%' : '—';
+    $('#kpiPresentismHint').textContent=currentMetric ? `${formatDate(currentMetric.date)} · ${currentMetric.attendees}/${currentMetric.active} activos` : 'por encuentro: asistentes / activos';
+    chart('attendanceChart','line',metrics.map(x=>formatDate(x.date)),[
+      {label:'Asistentes únicos',data:metrics.map(x=>x.attendees),tension:.28,fill:false},
+      {label:'Activos',data:metrics.map(x=>x.active),tension:.28,fill:false},
+      {label:'Presentismo %',data:metrics.map(x=>x.presentism),tension:.28,fill:false,yAxisID:'y1'}
+    ],{
+      scales:{
+        x:{grid:{display:false},ticks:{color:'#7a8790',font:{size:9}}},
+        y:{beginAtZero:true,grid:{color:'#edf1f3'},ticks:{color:'#7a8790',font:{size:9}}},
+        y1:{beginAtZero:true,max:100,position:'right',grid:{drawOnChartArea:false},ticks:{callback:v=>v+'%',color:'#7a8790',font:{size:9}}}
+      }
+    });
 
     const byArea=groupUnique(regs,r=>r.area||'Sin área').sort((a,b)=>b.value-a.value).slice(0,12);
     chart('areaChart','doughnut',byArea.map(x=>x.label),[{label:'Inscriptos',data:byArea.map(x=>x.value)}]);
@@ -330,8 +453,10 @@
       {label:'Asistentes',data:commRegs.map(x=>attByComm.get(x.label)||0)}
     ]);
 
-    const schoolAtt=groupUnique(atts,r=>r.school||'Sin escuela').sort((a,b)=>b.value-a.value).slice(0,10);
-    chart('schoolChart','bar',schoolAtt.map(x=>x.label),[{label:'Asistentes',data:schoolAtt.map(x=>x.value)}],{indexAxis:'y'});
+    const schoolNames=new Map();
+    [...regs,...atts].forEach(r=>{const k=cueOf(r);if(k&&!schoolNames.has(k))schoolNames.set(k,r.school||r.cue||'Sin escuela')});
+    const schoolAtt=groupUnique(atts,r=>cueOf(r)).sort((a,b)=>b.value-a.value).slice(0,10);
+    chart('schoolChart','bar',schoolAtt.map(x=>schoolNames.get(x.label)||x.label),[{label:'Asistentes únicos',data:schoolAtt.map(x=>x.value)}],{indexAxis:'y'});
 
     const venueAtt=groupUnique(atts,r=>r.venue||'Sin sede').sort((a,b)=>b.value-a.value).slice(0,10);
     chart('venueChart','bar',venueAtt.map(x=>x.label),[{label:'Asistentes',data:venueAtt.map(x=>x.value)}],{indexAxis:'y'});
@@ -342,12 +467,19 @@
     const shiftAtt=groupUnique(atts,r=>r.shift||'Sin turno').sort((a,b)=>b.value-a.value).slice(0,8);
     chart('shiftChart','doughnut',shiftAtt.map(x=>x.label),[{label:'Asistentes',data:shiftAtt.map(x=>x.value)}]);
 
-    const schools=groupUnique(regs,r=>r.school||'Sin escuela').sort((a,b)=>b.value-a.value);
-    const attSchool=new Map(groupUnique(atts,r=>r.school||'Sin escuela').map(x=>[x.label,x.value]));
-    $('#schoolTable').innerHTML=schools.slice(0,80).map(s=>{const a=attSchool.get(s.label)||0;return `<tr><td>${esc(s.label)}</td><td>${s.value}</td><td>${a}</td><td>${rate(a,s.value).toLocaleString('es-AR')}%</td></tr>`}).join('') || '<tr><td colspan="4" class="empty">Sin datos.</td></tr>';
+    const schools=groupUnique(regs,r=>cueOf(r)).sort((a,b)=>b.value-a.value);
+    const attSchool=new Map(groupUnique(atts,r=>cueOf(r)).map(x=>[x.label,x.value]));
+    const schoolMeta=new Map();
+    regs.forEach(r=>{const k=cueOf(r);if(k&&!schoolMeta.has(k))schoolMeta.set(k,r)});
+    $('#schoolTable').innerHTML=schools.slice(0,80).map(s=>{
+      const a=attSchool.get(s.label)||0,m=schoolMeta.get(s.label)||{};
+      return `<tr><td>${esc(m.cue||'—')}</td><td>${esc(upper(m.school)||'—')}</td><td>${esc(upper(m.dependency)||'—')}</td><td>${esc(upper(m.sector)||'—')}</td><td>${esc(upper(m.comuna)||'—')}</td><td>${s.value}</td><td>${a}</td><td>${rate(a,s.value).toLocaleString('es-AR')}%</td></tr>`
+    }).join('') || '<tr><td colspan="8" class="empty">Sin datos.</td></tr>';
 
-    const absent=regs.filter(r=>!attIds.has(idOf(r)));
-    $('#absentTable').innerHTML=absent.slice(0,250).map(r=>`<tr><td>${esc(r.name||r.email||r.dni)}</td><td>${esc(r.school||'—')}</td><td>${esc(r.commissionCode||'—')}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">No hay inscriptos ausentes con estos filtros.</td></tr>';
+    const absentById=new Map();
+    regs.filter(r=>!attIds.has(idOf(r))).forEach(r=>{const id=idOf(r);if(id&&!absentById.has(id))absentById.set(id,r)});
+    const absent=[...absentById.values()];
+    $('#absentTable').innerHTML=absent.slice(0,250).map(r=>`<tr><td>${esc(cleanDni(r.dni)||'—')}</td><td>${esc(r.name||r.email||'—')}</td><td>${esc(upper(r.school)||'—')}</td><td>${esc(formatDate(r.registrationDate)||'—')}</td><td>${esc(upper(r.dependency)||'—')}</td><td>${esc(upper(statusNorm(r.status))||'—')}</td><td>${esc(r.commissionCode||'—')}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">No hay inscriptos ausentes con estos filtros.</td></tr>';
   }
 
   function chart(id,type,labels,datasets,extra={}){
@@ -382,8 +514,10 @@
     const q=normalize($('#detailSearch').value);
     const attSet=new Set(filtered.attendance.map(idOf).filter(Boolean));
     const actions=new Map(dataset.actions.map(a=>[a.code,a]));
-    const rows=filtered.registrations.filter(r=>!q||normalize([r.dni,r.name,r.school,r.commissionCode,r.area].join(' ')).includes(q)).slice(0,1000);
-    $('#detailTable').innerHTML=rows.map(r=>`<tr><td>${esc(r.dni||'—')}</td><td>${esc(r.name||r.email||'—')}</td><td><strong>${esc(r.actionCode)}</strong><br><small>${esc(actions.get(r.actionCode)?.title||'')}</small></td><td>${esc(r.school||'—')}</td><td>${esc(r.area||'—')}</td><td>${esc(r.commissionCode||'—')}</td><td>${attSet.has(idOf(r))?'<span class="badge">Sí</span>':'<span class="badge no">No</span>'}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">Sin datos para mostrar.</td></tr>';
+    const byId=new Map();
+    filtered.registrations.filter(r=>!q||normalize([r.dni,r.name,r.school,r.cue,r.dependency,r.sector,r.comuna,r.status,r.commissionCode,r.area].join(' ')).includes(q)).forEach(r=>{const id=idOf(r);if(id&&!byId.has(id))byId.set(id,r)});
+    const rows=[...byId.values()].slice(0,1000);
+    $('#detailTable').innerHTML=rows.map(r=>`<tr><td>${esc(cleanDni(r.dni)||'—')}</td><td>${esc(r.name||r.email||'—')}</td><td><strong>${esc(r.actionCode)}</strong><br><small>${esc(actions.get(r.actionCode)?.title||'')}</small></td><td>${esc(upper(r.school)||'—')}</td><td>${esc(formatDate(r.registrationDate)||'—')}</td><td>${esc(upper(r.dependency)||'—')}</td><td>${esc(upper(r.sector)||'—')}</td><td>${esc(upper(r.comuna)||'—')}</td><td>${esc(upper(statusNorm(r.status))||'—')}</td><td>${esc(r.area||'—')}</td><td>${esc(r.commissionCode||'—')}</td><td>${attSet.has(idOf(r))?'<span class="badge">Sí</span>':'<span class="badge no">No</span>'}</td></tr>`).join('') || '<tr><td colspan="12" class="empty">Sin datos para mostrar.</td></tr>';
   }
 
   function refreshSourceActionOptions(){
@@ -483,9 +617,13 @@
     ['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('drag')}));
     ['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove('drag')}));
     dz.addEventListener('drop',e=>handleFiles([...e.dataTransfer.files]));
-    ['filterAction','filterSchool','filterTutor','filterArea','filterVenue','filterShift'].forEach(id=>$('#'+id).addEventListener('change',applyFilters));
-    $('#globalSearch').addEventListener('input',applyFilters); $('#detailSearch').addEventListener('input',renderDetail);
-    $('#clearFilters').addEventListener('click',()=>{['filterAction','filterSchool','filterTutor','filterArea','filterVenue','filterShift'].forEach(id=>$('#'+id).value='');$('#globalSearch').value='';applyFilters()});
+    ['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterDate','filterTutor','filterArea','filterVenue','filterShift','excludeDate'].forEach(id=>$('#'+id).addEventListener('change',applyFilters));
+    ['globalSearch','excludeSurname'].forEach(id=>$('#'+id).addEventListener('input',applyFilters));
+    $('#detailSearch').addEventListener('input',renderDetail);
+    $('#savedFilterSelect').addEventListener('change',()=>{const id=$('#savedFilterSelect').value;$('#deleteFilterBtn').disabled=!id;const f=(dataset.savedFilters||[]).find(x=>x.id===id);if(f)applyFilterSnapshot(f.config)});
+    $('#saveFilterBtn').addEventListener('click',saveCurrentFilter);
+    $('#deleteFilterBtn').addEventListener('click',deleteSavedFilter);
+    $('#clearFilters').addEventListener('click',()=>{['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterDate','filterTutor','filterArea','filterVenue','filterShift','excludeDate'].forEach(id=>$('#'+id).value='');['globalSearch','excludeSurname'].forEach(id=>$('#'+id).value='');$('#savedFilterSelect').value='';$('#deleteFilterBtn').disabled=true;applyFilters()});
     $('#exportBtn').addEventListener('click',exportCsv);
     $('#resetBtn').addEventListener('click',async()=>{if(confirm('¿Vaciar todos los datos de prueba guardados en este navegador?')){await clearState();toast('Datos de prueba eliminados')}});
     $('#sourceForm')?.addEventListener('submit',saveSourceFromForm);

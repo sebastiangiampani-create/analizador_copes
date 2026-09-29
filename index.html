@@ -62,16 +62,28 @@
               <strong>Filtros del tablero</strong>
               <span>Todos los gráficos y tablas responden a esta selección.</span>
             </div>
-            <button id="clearFilters" class="btn ghost compact">Limpiar filtros</button>
+            <div class="filter-actions">
+              <select id="savedFilterSelect" class="saved-filter-select"><option value="">Filtro guardado...</option></select>
+              <button id="saveFilterBtn" class="btn ghost compact">Guardar filtro</button>
+              <button id="deleteFilterBtn" class="btn ghost compact" disabled>Eliminar</button>
+              <button id="clearFilters" class="btn ghost compact">Limpiar filtros</button>
+            </div>
           </div>
           <div class="filter-bar">
             <label>Acción<select id="filterAction"></select></label>
-            <label>Escuela<select id="filterSchool"></select></label>
+            <label>ESCUELA<select id="filterSchool"></select></label>
+            <label>DEPENDENCIA<select id="filterDependency"></select></label>
+            <label>SECTOR DE GESTIÓN<select id="filterSector"></select></label>
+            <label>COMUNA<select id="filterComuna"></select></label>
+            <label>ESTADO<select id="filterStatus"></select></label>
+            <label>FECHA<input id="filterDate" type="date" /></label>
             <label>Tutor / capacitador<select id="filterTutor"></select></label>
             <label>Área<select id="filterArea"></select></label>
             <label>Sede<select id="filterVenue"></select></label>
             <label>Turno<select id="filterShift"></select></label>
-            <label class="search-label">Buscar<input id="globalSearch" type="search" placeholder="Curso, escuela, docente, tutor..." /></label>
+            <label>Excluir apellido<input id="excludeSurname" type="text" placeholder="Ej. Pérez" /></label>
+            <label>Excluir fecha<input id="excludeDate" type="date" /></label>
+            <label class="search-label">Buscar<input id="globalSearch" type="search" placeholder="DNI, escuela, docente, tutor..." /></label>
           </div>
         </div>
 
@@ -86,7 +98,11 @@
           </article>
           <article class="kpi accent">
             <div class="kpi-icon">%</div>
-            <span>Asistencia</span><strong id="kpiRate">0%</strong><small>asistentes / inscriptos</small>
+            <span>Asistencia</span><strong id="kpiRate">0%</strong><small>asistentes únicos / inscriptos únicos</small>
+          </article>
+          <article class="kpi accent-secondary">
+            <div class="kpi-icon">%</div>
+            <span>Presentismo</span><strong id="kpiPresentism">—</strong><small id="kpiPresentismHint">por encuentro: asistentes / activos</small>
           </article>
           <article class="kpi">
             <div class="kpi-icon">⌂</div>
@@ -114,7 +130,7 @@
 
         <div class="chart-grid">
           <article class="panel wide hero-chart">
-            <div class="panel-head"><div><h3>Asistencia por fecha / encuentro</h3><p>Evolución de participantes únicos</p></div><span class="panel-chip">Tendencia</span></div>
+            <div class="panel-head"><div><h3>Asistencia y presentismo por FECHA</h3><p>Asistentes únicos, activos y % de presentismo por encuentro</p></div><span class="panel-chip">Tendencia</span></div>
             <div class="chart-wrap tall"><canvas id="attendanceChart"></canvas></div>
           </article>
 
@@ -140,7 +156,7 @@
 
         <div class="chart-grid compact-grid">
           <article class="panel">
-            <div class="panel-head"><div><h3>Escuelas</h3><p>Top por asistentes únicos</p></div></div>
+            <div class="panel-head"><div><h3>Escuelas</h3><p>Top por CUE con asistentes únicos</p></div></div>
             <div class="chart-wrap"><canvas id="schoolChart"></canvas></div>
           </article>
           <article class="panel">
@@ -163,12 +179,12 @@
 
         <div class="table-grid">
           <article class="panel">
-            <div class="panel-head"><div><h3>Escuelas con participación</h3><p>Ordenadas por docentes inscriptos</p></div></div>
-            <div class="table-scroll"><table><thead><tr><th>Escuela</th><th>Inscriptos</th><th>Asistentes</th><th>%</th></tr></thead><tbody id="schoolTable"></tbody></table></div>
+            <div class="panel-head"><div><h3>Escuelas con participación</h3><p>Contabilizadas por CUE</p></div></div>
+            <div class="table-scroll"><table><thead><tr><th>CUE</th><th>ESCUELA</th><th>DEPENDENCIA</th><th>SECTOR DE GESTIÓN</th><th>COMUNA</th><th>Inscriptos</th><th>Asistentes</th><th>%</th></tr></thead><tbody id="schoolTable"></tbody></table></div>
           </article>
           <article class="panel">
             <div class="panel-head"><div><h3>Inscriptos sin asistencia</h3><p>Nómina según filtros activos</p></div></div>
-            <div class="table-scroll"><table><thead><tr><th>Docente</th><th>Escuela</th><th>Comisión</th></tr></thead><tbody id="absentTable"></tbody></table></div>
+            <div class="table-scroll"><table><thead><tr><th>DNI</th><th>Docente</th><th>ESCUELA</th><th>FECHA</th><th>DEPENDENCIA</th><th>ESTADO</th><th>Comisión</th></tr></thead><tbody id="absentTable"></tbody></table></div>
           </article>
         </div>
       </section>
@@ -202,7 +218,7 @@
         <div class="page-intro source-page-intro">
           <span class="section-kicker">FUENTES DINÁMICAS</span>
           <h2>Google Sheets por acción</h2>
-          <p>Registrá una vez el enlace de cada acción. En producción, el backend sincronizará los cambios con Neon para que todos los usuarios consulten la misma información.</p>
+          <p>Registrá una vez el enlace de cada acción. El backend sincronizará los cambios con Supabase para que todos los usuarios consulten la misma información.</p>
         </div>
 
         <div class="source-summary">
@@ -278,7 +294,7 @@
             <div><h3>Cómo funcionará en producción</h3><p>Una sola sincronización central para todos los usuarios.</p></div>
           </div>
           <div class="flow-line">
-            <span>Google Sheets</span><b>→</b><span>Sincronizador seguro</span><b>→</b><span>Neon PostgreSQL</span><b>→</b><span>Dashboard multiusuario</span>
+            <span>Google Sheets</span><b>→</b><span>Sincronizador seguro</span><b>→</b><span>Supabase PostgreSQL</span><b>→</b><span>Dashboard multiusuario</span>
           </div>
           <div class="role-pills">
             <span>Administrador · configura fuentes y usuarios</span>
@@ -298,7 +314,7 @@
           <div class="detail-search"><input id="detailSearch" type="search" placeholder="Buscar DNI, apellido, escuela, comisión..." /></div>
           <div class="table-scroll detail-table">
             <table>
-              <thead><tr><th>DNI</th><th>Docente</th><th>Acción</th><th>Escuela</th><th>Área</th><th>Comisión</th><th>Asistió</th></tr></thead>
+              <thead><tr><th>DNI</th><th>Docente</th><th>Acción</th><th>ESCUELA</th><th>FECHA</th><th>DEPENDENCIA</th><th>SECTOR DE GESTIÓN</th><th>COMUNA</th><th>ESTADO</th><th>Área</th><th>Comisión</th><th>Asistió</th></tr></thead>
               <tbody id="detailTable"></tbody>
             </table>
           </div>

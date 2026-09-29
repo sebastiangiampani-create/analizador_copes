@@ -744,8 +744,8 @@
       </tr>`;
     }).join('') || '<tr><td colspan="7" class="empty">Todavía no registraste fuentes. Podés asociar el link de cada Google Sheet desde el formulario.</td></tr>';
 
-    $('[data-sync-source]').forEach(btn=>btn.addEventListener('click',()=>syncSourceNow(btn.dataset.syncSource)));
-    $('[data-remove-source]').forEach(btn=>btn.addEventListener('click',async()=>{
+    document.querySelectorAll('[data-sync-source]').forEach(btn=>btn.addEventListener('click',()=>syncSourceNow(btn.dataset.syncSource)));
+    document.querySelectorAll('[data-remove-source]').forEach(btn=>btn.addEventListener('click',async()=>{
       const id=btn.dataset.removeSource;
       const src=(dataset.sources||[]).find(x=>x.id===id);
       if(!src) return;

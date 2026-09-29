@@ -66,11 +66,11 @@
   }
 
   function sourceAuthLabel(mode){
-    return ({public_link:'Por link',technical_account:'Cuenta técnica',delegated:'Autenticado'})[mode] || mode || '—';
+    return ({private_backend:'Privada · backend',public_link:'Pública por link',technical_account:'Cuenta técnica',delegated:'Autenticado'})[mode] || mode || '—';
   }
 
   function sourceStatusLabel(status){
-    return ({pending_backend:'Pendiente',syncing:'Sincronizando',ok:'Sincronizada',error:'Error'})[status] || status || 'Pendiente';
+    return ({pending_backend:'Pendiente de conexión',syncing:'Sincronizando',ok:'Sincronizada',error:'Error'})[status] || status || 'Pendiente de conexión';
   }
 
   function mapRow(row){
@@ -664,10 +664,10 @@
     const src=(dataset.sources||[]).find(x=>x.id===sourceId);
     if(!src || src.status==='syncing') return;
     if(src.authMode!=='public_link'){
-      src.status='error';
-      src.lastSyncMessage='La fuente está configurada como privada/autenticada. Para este modo hace falta una cuenta técnica.';
+      src.status='pending_backend';
+      src.lastSyncMessage='Google bloquea esta Sheet privada fuera de una sesión autorizada. El enlace quedó registrado; la carga por Excel sigue disponible.';
       await saveState(); renderSources();
-      if(!silent)toast('La fuente requiere acceso autenticado');
+      if(!silent)toast('Sheet privada: queda pendiente de conexión backend');
       return;
     }
 
@@ -700,8 +700,15 @@
       }
     }catch(e){
       console.error('Error sincronizando Google Sheets',e);
-      src.status='error';
-      src.lastSyncMessage=e?.message||'No se pudo sincronizar.';
+      const msg=e?.message||'No se pudo sincronizar.';
+      if(/sin respuesta de Google|bloqueó la lectura|pantalla de acceso|HTTP 401|HTTP 403|accesible por link/i.test(msg)){
+        src.status='pending_backend';
+        src.authMode='private_backend';
+        src.lastSyncMessage='La Sheet es privada. El enlace quedó guardado y necesita conexión backend para sincronizar.';
+      }else{
+        src.status='error';
+        src.lastSyncMessage=msg;
+      }
       await saveState();
       renderSources();
       if(!silent)toast('No se pudo sincronizar '+src.actionCode);
@@ -796,10 +803,14 @@
     renderSources();
     refreshFilterOptions();
     if(source.authMode==='public_link'){
-      toast('Link registrado. Sincronizando '+actionCode+'...');
+      toast('Link registrado. Probando acceso público...');
       await syncSourceNow(source.id);
     }else{
-      toast('Link registrado para '+actionCode+'. Requiere acceso autenticado.');
+      source.status='pending_backend';
+      source.lastSyncMessage='Google Sheet privada registrada. Pendiente de conexión backend.';
+      await saveState();
+      renderSources();
+      toast('Google Sheet privada registrada');
     }
   }
 

@@ -218,13 +218,13 @@
         <div class="page-intro source-page-intro">
           <span class="section-kicker">FUENTES DINÁMICAS</span>
           <h2>Google Sheets por acción</h2>
-          <p>Registrá una vez el enlace de cada acción. El backend sincronizará los cambios con Supabase para que todos los usuarios consulten la misma información.</p>
+          <p>Registrá el enlace de cada acción. Las Google Sheets privadas necesitan una conexión de backend; mientras tanto, la carga por Excel sigue operativa.</p>
         </div>
 
         <div class="source-summary">
           <article class="source-stat"><span>Fuentes registradas</span><strong id="sourceCount">0</strong></article>
           <article class="source-stat"><span>Activas</span><strong id="sourceActiveCount">0</strong></article>
-          <article class="source-stat"><span>Pendientes de backend</span><strong id="sourcePendingCount">0</strong></article>
+          <article class="source-stat"><span>Pendientes de conexión</span><strong id="sourcePendingCount">0</strong></article>
         </div>
 
         <div class="source-layout">
@@ -250,9 +250,8 @@
               <label class="field">
                 <span>Tipo de acceso</span>
                 <select id="sourceAuthMode">
-                  <option value="public_link">Accesible por link</option>
-                  <option value="technical_account">Compartida con cuenta técnica</option>
-                  <option value="delegated">Acceso autenticado delegado</option>
+                  <option value="private_backend">Google Sheet privada</option>
+                  <option value="public_link">Accesible públicamente por link</option>
                 </select>
               </label>
               <label class="field">
@@ -266,7 +265,7 @@
                 </select>
               </label>
               <div class="source-note full">
-                <strong>Seguridad:</strong> esta pantalla guarda solamente la configuración local de prueba. Las credenciales nunca deben quedar en GitHub ni en el navegador.
+                <strong>Seguridad:</strong> una Sheet privada no se intenta leer desde el navegador. El enlace se registra sin exponer credenciales ni datos personales.
               </div>
               <div class="source-form-actions full">
                 <button type="submit" class="btn primary">Registrar link</button>
@@ -291,7 +290,7 @@
 
         <article class="panel architecture-panel">
           <div class="panel-head">
-            <div><h3>Cómo funcionará en producción</h3><p>Una sola sincronización central para todos los usuarios.</p></div>
+            <div><h3>Sincronización segura</h3><p>Las Sheets privadas se leerán desde backend; nunca desde el navegador público.</p></div>
           </div>
           <div class="flow-line">
             <span>Google Sheets</span><b>→</b><span>Sincronizador seguro</span><b>→</b><span>Supabase PostgreSQL</span><b>→</b><span>Dashboard multiusuario</span>

@@ -8,25 +8,7 @@
   <meta name="description" content="Dashboard interactivo de acciones formativas, inscripciones y asistencias." />
   <link rel="stylesheet" href="./styles.css" />
 </head>
-<body class="auth-locked">
-  <div id="authGate" class="auth-gate">
-    <div class="auth-card">
-      <div class="auth-logo">A</div>
-      <div class="eyebrow">ANALIZADOR COPES</div>
-      <h1>Ingresá con Google</h1>
-      <p>Usamos tu cuenta para acceder únicamente a las Google Sheets que ya tenés autorizadas. El permiso solicitado es de solo lectura.</p>
-      <button id="googleLoginBtn" class="google-login-btn" type="button">
-        <span class="google-g">G</span><span>Continuar con Google</span>
-      </button>
-      <p id="authStatus" class="auth-status">Necesario para sincronizar planillas privadas.</p>
-      <div id="googleSetupHelp" class="auth-setup-help" hidden>
-        <strong>Configuración inicial pendiente</strong>
-        <span>Supabase → Authentication → Sign In / Providers → Google</span>
-      </div>
-      <div class="auth-security">La app no publica las planillas ni guarda tu contraseña de Google.</div>
-    </div>
-  </div>
-
+<body>
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
@@ -50,8 +32,8 @@
       <div class="status-card">
         <span class="status-dot"></span>
         <div>
-          <strong>Google + Supabase</strong>
-          <p>Sheets privadas con autorización de lectura.</p>
+          <strong>Modo local seguro</strong>
+          <p>Los Excel se procesan en este navegador.</p>
         </div>
       </div>
       <div class="privacy-card">
@@ -70,12 +52,6 @@
         <div class="top-actions">
           <button id="exportBtn" class="btn ghost" disabled>Exportar CSV</button>
           <button id="resetBtn" class="btn danger">Vaciar prueba</button>
-          <div id="userSession" class="user-session" hidden>
-            <img id="userAvatar" class="user-avatar" alt="" hidden />
-            <div class="user-copy"><strong id="userName">Usuario</strong><small id="userEmail"></small></div>
-            <button id="reconnectGoogleBtn" class="user-link" type="button"><span id="googleAccessState">Sheets conectado</span></button>
-            <button id="logoutBtn" class="user-link danger-link" type="button">Salir</button>
-          </div>
         </div>
       </header>
 
@@ -248,7 +224,7 @@
         <div class="source-summary">
           <article class="source-stat"><span>Fuentes registradas</span><strong id="sourceCount">0</strong></article>
           <article class="source-stat"><span>Activas</span><strong id="sourceActiveCount">0</strong></article>
-          <article class="source-stat"><span>Pendientes / reconexión</span><strong id="sourcePendingCount">0</strong></article>
+          <article class="source-stat"><span>Pendientes de backend</span><strong id="sourcePendingCount">0</strong></article>
         </div>
 
         <div class="source-layout">
@@ -272,9 +248,12 @@
                 <input id="sourceUrl" type="url" placeholder="https://docs.google.com/spreadsheets/d/..." required />
               </label>
               <label class="field">
-                <span>Acceso</span>
-                <input id="sourceAuthMode" type="hidden" value="google_oauth" />
-                <div class="source-auth-pill">Google · usuario conectado</div>
+                <span>Tipo de acceso</span>
+                <select id="sourceAuthMode">
+                  <option value="public_link">Accesible por link</option>
+                  <option value="technical_account">Compartida con cuenta técnica</option>
+                  <option value="delegated">Acceso autenticado delegado</option>
+                </select>
               </label>
               <label class="field">
                 <span>Sincronizar cada</span>
@@ -287,7 +266,7 @@
                 </select>
               </label>
               <div class="source-note full">
-                <strong>Google Sheets privadas:</strong> no hace falta publicar el archivo. La sincronización usa el permiso de solo lectura de la cuenta con la que ingresaste.
+                <strong>Seguridad:</strong> esta pantalla guarda solamente la configuración local de prueba. Las credenciales nunca deben quedar en GitHub ni en el navegador.
               </div>
               <div class="source-form-actions full">
                 <button type="submit" class="btn primary">Registrar link</button>
@@ -315,7 +294,7 @@
             <div><h3>Cómo funcionará en producción</h3><p>Una sola sincronización central para todos los usuarios.</p></div>
           </div>
           <div class="flow-line">
-            <span>Login Google</span><b>→</b><span>Google Sheets API · lectura</span><b>→</b><span>Analizador COPES</span><b>→</b><span>Supabase</span>
+            <span>Google Sheets</span><b>→</b><span>Sincronizador seguro</span><b>→</b><span>Supabase PostgreSQL</span><b>→</b><span>Dashboard multiusuario</span>
           </div>
           <div class="role-pills">
             <span>Administrador · configura fuentes y usuarios</span>
@@ -346,10 +325,8 @@
 
   <div id="toast" class="toast"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script src="./auth.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>

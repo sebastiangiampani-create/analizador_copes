@@ -261,13 +261,32 @@
       try{
         const data=await file.arrayBuffer();
         const wb=XLSX.read(data,{type:'array',cellDates:true});
-        const parsed=parseWorkbook(file,wb); mergeParsed(parsed); results.push({ok:true,...parsed.importInfo});
-      }catch(e){results.push({ok:false,file:file.name,error:e.message})}
+        const parsed=parseWorkbook(file,wb);
+        mergeParsed(parsed);
+        results.push({ok:true,...parsed.importInfo});
+      }catch(e){
+        console.error('Error importando',file.name,e);
+        results.push({ok:false,file:file.name,error:e.message});
+      }
     }
     await saveState();
-    renderImportResults(results); renderAll();
-    switchView('imports');
-    toast(`${results.filter(x=>x.ok).length} archivo(s) procesado(s)`);
+    renderImportResults(results);
+
+    const okCount=results.filter(x=>x.ok).length;
+    if(okCount){
+      ['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterDate','filterTutor','filterArea','filterVenue','filterShift','excludeDate'].forEach(id=>{const el=$('#'+id);if(el)el.value=''});
+      ['globalSearch','excludeSurname'].forEach(id=>{const el=$('#'+id);if(el)el.value=''});
+      if($('#savedFilterSelect'))$('#savedFilterSelect').value='';
+      if($('#deleteFilterBtn'))$('#deleteFilterBtn').disabled=true;
+      renderAll();
+      switchView('dashboard');
+      toast(okCount+' archivo(s) cargado(s). Panel actualizado.');
+    }else{
+      renderAll();
+      switchView('imports');
+      toast('No se pudo cargar ningún archivo. Revisá el detalle.');
+    }
+    if($('#fileInput')) $('#fileInput').value='';
   }
 
   function renderImportResults(results=dataset.imports){
@@ -425,7 +444,7 @@
 
     const metrics=eventMetrics(regs,atts);
     const selectedDate=$('#filterDate').value;
-    const currentMetric=selectedDate ? metrics.find(x=>x.date===selectedDate) : metrics.at(-1);
+    const currentMetric=selectedDate ? metrics.find(x=>x.date===selectedDate) : (metrics.length ? metrics[metrics.length-1] : null);
     $('#kpiPresentism').textContent=currentMetric ? currentMetric.presentism.toLocaleString('es-AR')+'%' : '—';
     $('#kpiPresentismHint').textContent=currentMetric ? `${formatDate(currentMetric.date)} · ${currentMetric.attendees}/${currentMetric.active} activos` : 'por encuentro: asistentes / activos';
     chart('attendanceChart','line',metrics.map(x=>formatDate(x.date)),[
@@ -483,31 +502,35 @@
   }
 
   function chart(id,type,labels,datasets,extra={}){
-    if(charts[id])charts[id].destroy();
-    const ctx=document.getElementById(id); if(!ctx)return;
-    const styled=datasets.map((d,i)=>{
+    try{
+      if(charts[id])charts[id].destroy();
+      const ctx=document.getElementById(id); if(!ctx)return;
+      const styled=datasets.map((d,i)=>{
       if(type==='doughnut') return {...d,backgroundColor:labels.map((_,j)=>PALETTE[j%PALETTE.length]),borderWidth:0,hoverOffset:4};
       if(type==='line') return {...d,borderColor:PALETTE[i%PALETTE.length],backgroundColor:'rgba(22,117,102,.08)',pointBackgroundColor:PALETTE[i%PALETTE.length],pointRadius:3,borderWidth:2.2};
       return {...d,backgroundColor:PALETTE[i%PALETTE.length],borderRadius:6,borderSkipped:false,maxBarThickness:38};
     });
-    charts[id]=new Chart(ctx,{
-      type,
-      data:{labels,datasets:styled},
-      options:{
-        responsive:true,
-        maintainAspectRatio:false,
-        interaction:{mode:'nearest',intersect:false},
-        plugins:{
-          legend:{position:'bottom',labels:{boxWidth:8,usePointStyle:true,padding:14,color:'#6d7983',font:{size:10,weight:600}}},
-          tooltip:{backgroundColor:'#10262b',titleColor:'#fff',bodyColor:'#dfe9e7',padding:10,cornerRadius:8}
-        },
-        scales:type==='doughnut'?{}:{
-          x:{grid:{display:false},ticks:{maxRotation:45,minRotation:0,color:'#7a8790',font:{size:9}}},
-          y:{beginAtZero:true,grid:{color:'#edf1f3'},ticks:{color:'#7a8790',font:{size:9}}}
-        },
-        ...extra
-      }
-    });
+      charts[id]=new Chart(ctx,{
+        type,
+        data:{labels,datasets:styled},
+        options:{
+          responsive:true,
+          maintainAspectRatio:false,
+          interaction:{mode:'nearest',intersect:false},
+          plugins:{
+            legend:{position:'bottom',labels:{boxWidth:8,usePointStyle:true,padding:14,color:'#6d7983',font:{size:10,weight:600}}},
+            tooltip:{backgroundColor:'#10262b',titleColor:'#fff',bodyColor:'#dfe9e7',padding:10,cornerRadius:8}
+          },
+          scales:type==='doughnut'?{}:{
+            x:{grid:{display:false},ticks:{maxRotation:45,minRotation:0,color:'#7a8790',font:{size:9}}},
+            y:{beginAtZero:true,grid:{color:'#edf1f3'},ticks:{color:'#7a8790',font:{size:9}}}
+          },
+          ...extra
+        }
+      });
+    }catch(e){
+      console.error('Error renderizando gráfico '+id,e);
+    }
   }
 
   function renderDetail(){
@@ -596,7 +619,7 @@
     $('#sourceInterval').value='5';
     renderSources();
     refreshFilterOptions();
-    toast('Link registrado para '+actionCode);
+    toast('Link registrado para '+actionCode+'. Aún no está sincronizado con el panel.');
   }
 
   function renderAll(){

@@ -70,7 +70,7 @@
   }
 
   function sourceStatusLabel(status){
-    return ({pending_backend:'Pendiente backend',ok:'Sincronizada',error:'Error'})[status] || status || 'Pendiente backend';
+    return ({pending_backend:'Pendiente',syncing:'Sincronizando',ok:'Sincronizada',error:'Error'})[status] || status || 'Pendiente';
   }
 
   function mapRow(row){
@@ -548,6 +548,154 @@
     input.value=String(input.value||'').toUpperCase();
   }
 
+  function gidFromSheetUrl(url=''){
+    return String(url).match(/[?#&]gid=(\d+)/)?.[1] || '';
+  }
+
+  function gvizRowsFromResponse(resp){
+    if(!resp || resp.status!=='ok' || !resp.table) throw new Error(resp?.errors?.[0]?.detailed_message || 'Google no devolvió datos utilizables.');
+    const cols=(resp.table.cols||[]).map((c,i)=>String(c?.label||c?.id||('Columna '+(i+1))).trim());
+    return (resp.table.rows||[]).map(row=>{
+      const out={};
+      cols.forEach((label,i)=>{
+        let v=row?.c?.[i]?.v ?? '';
+        if(typeof v==='string'){
+          const m=v.match(/^Date\((\d{4}),(\d{1,2}),(\d{1,2})(?:,(\d+),(\d+),(\d+))?\)$/);
+          if(m) v=new Date(Number(m[1]),Number(m[2]),Number(m[3]),Number(m[4]||0),Number(m[5]||0),Number(m[6]||0));
+        }
+        out[label]=v;
+      });
+      return out;
+    });
+  }
+
+  function loadGvizSheet(spreadsheetId,{sheet='',gid=''}={}){
+    return new Promise((resolve,reject)=>{
+      const cb='__copesGviz_'+Date.now()+'_'+Math.random().toString(36).slice(2);
+      const script=document.createElement('script');
+      let done=false;
+      const cleanup=()=>{
+        delete globalThis[cb];
+        script.remove();
+      };
+      const timer=setTimeout(()=>{
+        if(done)return; done=true; cleanup();
+        reject(new Error((sheet||('gid '+gid))+': sin respuesta de Google. Verificá que sea accesible por link.'));
+      },12000);
+      globalThis[cb]=(resp)=>{
+        if(done)return; done=true; clearTimeout(timer); cleanup();
+        try{ resolve(gvizRowsFromResponse(resp)); }catch(e){ reject(e); }
+      };
+      const params=new URLSearchParams();
+      if(sheet) params.set('sheet',sheet);
+      if(gid) params.set('gid',gid);
+      params.set('tqx','responseHandler:'+cb);
+      script.src='https://docs.google.com/spreadsheets/d/'+encodeURIComponent(spreadsheetId)+'/gviz/tq?'+params.toString();
+      script.async=true;
+      script.onerror=()=>{
+        if(done)return; done=true; clearTimeout(timer); cleanup();
+        reject(new Error((sheet||('gid '+gid))+': Google bloqueó la lectura.'));
+      };
+      document.head.appendChild(script);
+    });
+  }
+
+  function classifySheetRows(rows){
+    if(!rows?.length)return '';
+    const keys=Object.keys(rows[0]||{}).map(normalize);
+    const joined=keys.join(' | ');
+    if(joined.includes('cupo') && (joined.includes('capacitador') || joined.includes(' inscr'))) return 'Propuestas';
+    if(joined.includes('encuentro') || (joined.includes('comision') && joined.includes('codigo') && joined.includes('dni'))) return 'Asistencias';
+    if(joined.includes('dni') && (joined.includes('escuela') || joined.includes('establecimiento'))) return 'Inscripciones';
+    return '';
+  }
+
+  async function workbookFromGoogleSource(source){
+    const spreadsheetId=source.spreadsheetId||spreadsheetIdFromUrl(source.url);
+    if(!spreadsheetId) throw new Error('Link de Google Sheets inválido.');
+    const wb=XLSX.utils.book_new();
+    let found=0;
+    const messages=[];
+
+    for(const sheetName of ['Propuestas','Inscripciones','Asistencias']){
+      try{
+        const rows=await loadGvizSheet(spreadsheetId,{sheet:sheetName});
+        if(rows.length){
+          XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),sheetName);
+          found++;
+        }
+      }catch(e){ messages.push(e?.message||String(e)); }
+    }
+
+    if(!found){
+      const gid=gidFromSheetUrl(source.url);
+      if(gid){
+        try{
+          const rows=await loadGvizSheet(spreadsheetId,{gid});
+          const kind=classifySheetRows(rows);
+          if(kind && rows.length){
+            XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),kind);
+            found++;
+          }
+        }catch(e){ messages.push(e?.message||String(e)); }
+      }
+    }
+
+    if(!found) throw new Error(messages.join(' · ') || 'No pude leer Propuestas, Inscripciones ni Asistencias.');
+    return wb;
+  }
+
+  async function syncSourceNow(sourceId,{silent=false}={}){
+    const src=(dataset.sources||[]).find(x=>x.id===sourceId);
+    if(!src || src.status==='syncing') return;
+    if(src.authMode!=='public_link'){
+      src.status='error';
+      src.lastSyncMessage='La fuente está configurada como privada/autenticada. Para este modo hace falta una cuenta técnica.';
+      await saveState(); renderSources();
+      if(!silent)toast('La fuente requiere acceso autenticado');
+      return;
+    }
+
+    src.status='syncing';
+    src.lastSyncMessage='Leyendo Google Sheets...';
+    renderSources();
+
+    try{
+      const wb=await workbookFromGoogleSource(src);
+      const fakeFile={name:(src.actionCode||'C0000')+' - '+(src.name||'Google Sheets')+'.xlsx'};
+      const parsed=parseWorkbook(fakeFile,wb);
+      mergeParsed(parsed);
+
+      src.status='ok';
+      src.lastSyncAt=new Date().toISOString();
+      src.lastSyncMessage=parsed.registrations.length+' inscripciones · '+parsed.attendance.length+' asistencias · '+parsed.proposals.length+' propuestas';
+      await saveState();
+      renderAll();
+      if(!silent){
+        switchView('dashboard');
+        toast('Sincronización completada: '+src.actionCode);
+      }
+    }catch(e){
+      console.error('Error sincronizando Google Sheets',e);
+      src.status='error';
+      src.lastSyncMessage=e?.message||'No se pudo sincronizar.';
+      await saveState();
+      renderSources();
+      if(!silent)toast('No se pudo sincronizar '+src.actionCode);
+    }
+  }
+
+  function startSourceAutoSync(){
+    setInterval(()=>{
+      const now=Date.now();
+      (dataset.sources||[]).filter(s=>s.active!==false && s.authMode==='public_link').forEach(s=>{
+        const intervalMs=(Number(s.intervalMinutes)||5)*60000;
+        const last=s.lastSyncAt ? new Date(s.lastSyncAt).getTime() : 0;
+        if(now-last>=intervalMs) syncSourceNow(s.id,{silent:true});
+      });
+    },60000);
+  }
+
   function renderSources(){
     if(!$('#sourceTable')) return;
     refreshSourceActionOptions();
@@ -564,13 +712,14 @@
         <td><span class="source-name">${esc(s.name||'Google Sheet')}</span><span class="source-id">${esc(sid||s.url||'')}</span></td>
         <td>${esc(sourceAuthLabel(s.authMode))}</td>
         <td>cada ${Number(s.intervalMinutes)||5} min</td>
-        <td><span class="source-status ${status==='ok'?'ok':status==='error'?'error':'pending'}">${esc(sourceStatusLabel(status))}</span></td>
+        <td><span class="source-status ${status==='ok'?'ok':status==='error'?'error':'pending'}">${esc(sourceStatusLabel(status))}</span>${s.lastSyncMessage?`<span class="source-id" title="${esc(s.lastSyncMessage)}">${esc(s.lastSyncMessage)}</span>`:''}</td>
         <td>${s.lastSyncAt?new Date(s.lastSyncAt).toLocaleString('es-AR'):'—'}</td>
-        <td><button class="source-action-btn" data-remove-source="${esc(s.id)}">Quitar</button></td>
+        <td><button class="source-action-btn" data-sync-source="${esc(s.id)}">Sincronizar</button> <button class="source-action-btn" data-remove-source="${esc(s.id)}">Quitar</button></td>
       </tr>`;
     }).join('') || '<tr><td colspan="7" class="empty">Todavía no registraste fuentes. Podés asociar el link de cada Google Sheet desde el formulario.</td></tr>';
 
-    $$('[data-remove-source]').forEach(btn=>btn.addEventListener('click',async()=>{
+    $('[data-sync-source]').forEach(btn=>btn.addEventListener('click',()=>syncSourceNow(btn.dataset.syncSource)));
+    $('[data-remove-source]').forEach(btn=>btn.addEventListener('click',async()=>{
       const id=btn.dataset.removeSource;
       const src=(dataset.sources||[]).find(x=>x.id===id);
       if(!src) return;
@@ -619,7 +768,12 @@
     $('#sourceInterval').value='5';
     renderSources();
     refreshFilterOptions();
-    toast('Link registrado para '+actionCode+'. Aún no está sincronizado con el panel.');
+    if(source.authMode==='public_link'){
+      toast('Link registrado. Sincronizando '+actionCode+'...');
+      await syncSourceNow(source.id);
+    }else{
+      toast('Link registrado para '+actionCode+'. Requiere acceso autenticado.');
+    }
   }
 
   function renderAll(){
@@ -660,7 +814,7 @@
   }
 
   async function init(){
-    bind(); await loadState(); renderAll();
+    bind(); await loadState(); renderAll(); startSourceAutoSync();
     if(!dataset.actions.length) switchView('imports');
   }
   init();

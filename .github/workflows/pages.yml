@@ -1,4 +1,4 @@
-name: Publicar Analizador COPES
+name: Publicar Análisis de acciones
 on:
   push:
     branches: [main]

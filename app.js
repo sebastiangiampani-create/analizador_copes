@@ -883,6 +883,18 @@
       return `<option value="${esc(v)}"${label&&label!==v?' label="'+esc(label)+'"':''}></option>`;
     }).join('');
   }
+  function selectedValues(sel){ return sel?[...sel.selectedOptions].map(o=>o.value).filter(Boolean):[]; }
+  function setSelectedValues(sel,values=[]){
+    if(!sel)return;
+    const wanted=new Set((Array.isArray(values)?values:[values]).filter(Boolean));
+    [...sel.options].forEach(o=>{o.selected=wanted.has(o.value)});
+  }
+  function fillMultiSelect(sel,values,formatter=v=>v){
+    if(!sel)return;
+    const old=new Set(selectedValues(sel));
+    sel.innerHTML=sortAlpha(unique(values)).map(v=>'<option value="'+esc(v)+'">'+esc(formatter(v))+'</option>').join('');
+    [...sel.options].forEach(o=>{o.selected=old.has(o.value)});
+  }
   function splitManualList(v=''){
     return unique(String(v||'').split(/[;,\n]+/).map(x=>x.trim()).filter(Boolean));
   }
@@ -912,7 +924,10 @@
       sector:$('#filterSector').value,
       comuna:$('#filterComuna').value,
       status:$('#filterStatus').value,
-      date:$('#filterDate').value,
+      dates:unique([
+        ...selectedValues($('#filterDate')),
+        ...splitManualList($('#filterDateManual').value).map(normalizeManualDate).filter(Boolean)
+      ]).sort(),
       tutor:$('#filterTutor').value,
       area:$('#filterArea').value,
       venue:$('#filterVenue').value,
@@ -945,12 +960,12 @@
     if(!matchesBase(r,f))return false;
     // FECHA del tablero representa el encuentro. Para el padrón de inscriptos
     // se conserva a quienes estaban activos en esa fecha, no solo a quienes se inscribieron ese día.
-    if(f.date && !activeAtDate(r,f.date))return false;
+    if((f.dates||[]).length && !(f.dates||[]).some(date=>activeAtDate(r,date)))return false;
     return true;
   }
   function matchesAttendance(r,f){
     if(!matchesBase(r,f))return false;
-    if(f.date && r.eventDate!==f.date)return false;
+    if((f.dates||[]).length && !(f.dates||[]).includes(r.eventDate))return false;
     if((f.excludeDates||[]).includes(r.eventDate))return false;
     return true;
   }
@@ -999,6 +1014,7 @@
     fillDatalist('filterShiftList',regs.map(x=>x.shift).concat(props.map(x=>x.shift)));
     fillDatalist('excludeSurnameList',regs.map(surnameOf).filter(Boolean));
     const atts=exactAction ? dataset.attendance.filter(x=>x.actionCode===exactAction) : dataset.attendance;
+    fillMultiSelect($('#filterDate'),atts.map(x=>x.eventDate).filter(Boolean),formatDate);
     fillDatalist('excludeDateList',atts.map(x=>x.eventDate).filter(Boolean),formatDate);
     renderSavedFilters();
   }
@@ -1068,6 +1084,9 @@
     filtered.attendance=dataset.attendance
       .map(r=>enrichAttendanceFromRegistration(r,registrationIndex))
       .filter(r=>matchesAttendance(r,f));
+    filtered.bajas=(dataset.bajas||[])
+      .map(r=>enrichAttendanceFromRegistration(r,registrationIndex))
+      .filter(r=>matchesBase(r,f));
 
     // Las propuestas/comisiones deben quedar acotadas a lo que sobrevivió
     // a los filtros de personas (escuela, dependencia, comuna, estado, etc.).
@@ -1086,7 +1105,7 @@
 
       const hasPeopleLevelFilter=!!(
         f.school || f.dependency || f.sector || f.comuna || f.status ||
-        f.date || (f.excludeDates||[]).length || (f.excludeSurnames||[]).length || f.q
+        (f.dates||[]).length || (f.excludeDates||[]).length || (f.excludeSurnames||[]).length || f.q
       );
       if(hasPeopleLevelFilter && !scopedCommissionCodes.has(p.code))return false;
       return true;
@@ -1098,8 +1117,11 @@
   function applyFilterSnapshot(f={}){
     if($('#filterAction'))$('#filterAction').value=f.action||'';
     refreshFilterOptions();
-    const map={school:'filterSchool',dependency:'filterDependency',sector:'filterSector',comuna:'filterComuna',status:'filterStatus',date:'filterDate',tutor:'filterTutor',area:'filterArea',venue:'filterVenue',shift:'filterShift',q:'globalSearch'};
+    const map={school:'filterSchool',dependency:'filterDependency',sector:'filterSector',comuna:'filterComuna',status:'filterStatus',tutor:'filterTutor',area:'filterArea',venue:'filterVenue',shift:'filterShift',q:'globalSearch'};
     for(const [k,id] of Object.entries(map)){const el=$('#'+id); if(el) el.value=f[k]||''}
+    const savedMainDates=Array.isArray(f.dates)?f.dates:(f.date?[f.date]:[]);
+    setSelectedValues($('#filterDate'),savedMainDates);
+    $('#filterDateManual').value='';
     const savedSurnames=Array.isArray(f.excludeSurnames)?f.excludeSurnames:(f.excludeSurname?[f.excludeSurname]:[]);
     const savedDates=Array.isArray(f.excludeDates)?f.excludeDates:(f.excludeDate?[f.excludeDate]:[]);
     setManualList($('#excludeSurname'),savedSurnames);
@@ -1154,16 +1176,17 @@
     $('#kpiRegistered').textContent=regIds.size.toLocaleString('es-AR');
     $('#kpiAttendees').textContent=attIds.size.toLocaleString('es-AR');
     $('#kpiRate').textContent=rate(attIds.size,regIds.size).toLocaleString('es-AR')+'%';
-    $('#kpiSchools').textContent=unique(regs.map(cueOf).filter(Boolean)).length.toLocaleString('es-AR');
-    $('#kpiParticipatingSchools').textContent=unique(atts.map(cueOf).filter(Boolean)).length.toLocaleString('es-AR');
+    $('#kpiSchools').textContent=unique(regs.map(schoolKey).filter(Boolean)).length.toLocaleString('es-AR');
+    $('#kpiParticipatingSchools').textContent=unique(atts.map(schoolKey).filter(Boolean)).length.toLocaleString('es-AR');
     $('#kpiCommissions').textContent=unique(regs.map(x=>x.commissionCode)).length.toLocaleString('es-AR');
     $('#kpiAttendanceRows').textContent=atts.length.toLocaleString('es-AR');
     const linkedAttIds=new Set([...attIds].filter(x=>regIds.has(x)));
-    const schoolsReg=unique(regs.map(cueOf));
-    const schoolsAtt=new Set(atts.map(cueOf).filter(Boolean));
+    const schoolsReg=unique(regs.map(schoolKey).filter(Boolean));
+    const schoolsAtt=new Set(atts.map(schoolKey).filter(Boolean));
     $('#insightActions').textContent=unique(regs.map(x=>x.actionCode).concat(atts.map(x=>x.actionCode))).length.toLocaleString('es-AR');
     $('#insightNoShow').textContent=[...regIds].filter(x=>!linkedAttIds.has(x)).length.toLocaleString('es-AR');
     $('#insightSchoolsNoShow').textContent=schoolsReg.filter(x=>x&&!schoolsAtt.has(x)).length.toLocaleString('es-AR');
+    $('#insightBajas').textContent=(filtered.bajas||[]).length.toLocaleString('es-AR');
     $('#exportBtn').disabled=!regs.length;
     $('#excelBtn').disabled=!regs.length;
     $('#printBtn').disabled=!regs.length;
@@ -1175,10 +1198,14 @@
       : (dataset.actions.length ? `${dataset.actions.length} acciones cargadas · filtros interactivos` : 'Carga una base para empezar a analizar.');
 
     const metrics=eventMetrics(regs,atts);
-    const selectedDate=$('#filterDate').value;
-    const currentMetric=selectedDate ? metrics.find(x=>x.date===selectedDate) : (metrics.length ? metrics[metrics.length-1] : null);
-    $('#kpiPresentism').textContent=currentMetric ? currentMetric.presentism.toLocaleString('es-AR')+'%' : '—';
-    $('#kpiPresentismHint').textContent=currentMetric ? `${formatDate(currentMetric.date)} · ${currentMetric.attendees}/${currentMetric.active} activos` : 'por encuentro: asistentes / activos';
+    const selectedDates=currentFilters().dates||[];
+    const selectedMetrics=selectedDates.length?metrics.filter(x=>selectedDates.includes(x.date)):metrics;
+    const currentMetric=selectedMetrics.length===1 ? selectedMetrics[0] : (selectedMetrics.length ? selectedMetrics[selectedMetrics.length-1] : null);
+    const avgPresentism=selectedMetrics.length?Math.round(selectedMetrics.reduce((a,x)=>a+x.presentism,0)/selectedMetrics.length*10)/10:null;
+    $('#kpiPresentism').textContent=selectedMetrics.length>1 ? avgPresentism.toLocaleString('es-AR')+'%' : (currentMetric ? currentMetric.presentism.toLocaleString('es-AR')+'%' : '—');
+    $('#kpiPresentismHint').textContent=selectedMetrics.length>1
+      ? 'Promedio de '+selectedMetrics.length+' fechas seleccionadas'
+      : (currentMetric ? formatDate(currentMetric.date)+' · '+currentMetric.attendees+'/'+currentMetric.active+' activos' : 'por encuentro: asistentes / activos');
     chart('attendanceChart','line',metrics.map(x=>formatDate(x.date)),[
       {label:'Docentes asistentes únicos',data:metrics.map(x=>x.attendees),tension:.28,fill:false}
     ],{
@@ -1188,7 +1215,7 @@
       }
     });
 
-    chart('presentismPercentChart','line',metrics.map(x=>formatDate(x.date)),[
+    chart('presentismPercentChart','bar',metrics.map(x=>formatDate(x.date)),[
       {label:'Presentismo %',data:metrics.map(x=>x.presentism),tension:.28,fill:false}
     ],{
       scales:{
@@ -1219,8 +1246,8 @@
     ]);
 
     const schoolNames=new Map();
-    [...regs,...atts].filter(r=>cueOf(r)).forEach(r=>{const k=cueOf(r);if(k&&!schoolNames.has(k))schoolNames.set(k,r.school||r.cue||'Sin escuela')});
-    const schoolAtt=groupUnique(atts.filter(r=>cueOf(r)),r=>cueOf(r)).sort((a,b)=>b.value-a.value).slice(0,10);
+    [...regs,...atts].filter(r=>schoolKey(r)).forEach(r=>{const k=schoolKey(r);if(k&&!schoolNames.has(k))schoolNames.set(k,r.school||r.cue||'Sin escuela')});
+    const schoolAtt=groupUnique(atts.filter(r=>schoolKey(r)),r=>schoolKey(r)).sort((a,b)=>b.value-a.value).slice(0,10);
     chart('schoolChart','bar',schoolAtt.map(x=>schoolNames.get(x.label)||x.label),[{label:'Asistentes únicos',data:schoolAtt.map(x=>x.value)}],{indexAxis:'y'});
 
     const venueAtt=groupUnique(atts,r=>r.venue||'Sin sede').sort((a,b)=>b.value-a.value).slice(0,10);
@@ -1245,10 +1272,10 @@
     const shiftAtt=groupUnique(atts,r=>r.shift||'Sin turno').sort((a,b)=>b.value-a.value).slice(0,8);
     chart('shiftChart','doughnut',shiftAtt.map(x=>x.label),[{label:'Asistentes',data:shiftAtt.map(x=>x.value)}]);
 
-    const schools=groupUnique(regs.filter(r=>cueOf(r)),r=>cueOf(r)).sort((a,b)=>b.value-a.value);
-    const attSchool=new Map(groupUnique(atts.filter(r=>cueOf(r)),r=>cueOf(r)).map(x=>[x.label,x.value]));
+    const schools=groupUnique(regs.filter(r=>schoolKey(r)),r=>schoolKey(r)).sort((a,b)=>b.value-a.value);
+    const attSchool=new Map(groupUnique(atts.filter(r=>schoolKey(r)),r=>schoolKey(r)).map(x=>[x.label,x.value]));
     const schoolMeta=new Map();
-    regs.forEach(r=>{const k=cueOf(r);if(k&&!schoolMeta.has(k))schoolMeta.set(k,r)});
+    regs.forEach(r=>{const k=schoolKey(r);if(k&&!schoolMeta.has(k))schoolMeta.set(k,r)});
     $('#schoolTable').innerHTML=schools.slice(0,80).map(s=>{
       const a=attSchool.get(s.label)||0,m=schoolMeta.get(s.label)||{};
       return `<tr><td>${esc(m.cue||'—')}</td><td>${esc(upper(m.school)||'—')}</td><td>${esc(upper(m.dependency)||'—')}</td><td>${s.value}</td><td>${a}</td><td>${rate(a,s.value).toLocaleString('es-AR')}%</td></tr>`
@@ -1598,7 +1625,7 @@
     const pairs=[
       ['Acción',f.action],['Escuela',f.school],['Dependencia',f.dependency],
       ['Sector de gestión',f.sector],['Comuna',f.comuna],['Estado',f.status],
-      ['Fecha de encuentro',f.date?formatDate(f.date):''],['Tutor / capacitador',f.tutor],
+      ['Fechas de encuentro',(f.dates||[]).map(formatDate).join(' · ')],['Tutor / capacitador',f.tutor],
       ['Área',f.area],['Sede',f.venue],['Turno',f.shift],
       ['Excluir apellidos',(f.excludeSurnames||[]).join(' · ')],
       ['Excluir fechas',(f.excludeDates||[]).map(formatDate).join(' · ')],
@@ -1627,10 +1654,10 @@
 
   function schoolExportRows(){
     const regs=filtered.registrations, atts=filtered.attendance;
-    const schools=groupUnique(regs.filter(r=>cueOf(r)),r=>cueOf(r)).sort((a,b)=>b.value-a.value);
-    const attSchool=new Map(groupUnique(atts.filter(r=>cueOf(r)),r=>cueOf(r)).map(x=>[x.label,x.value]));
+    const schools=groupUnique(regs.filter(r=>schoolKey(r)),r=>schoolKey(r)).sort((a,b)=>b.value-a.value);
+    const attSchool=new Map(groupUnique(atts.filter(r=>schoolKey(r)),r=>schoolKey(r)).map(x=>[x.label,x.value]));
     const meta=new Map();
-    regs.forEach(r=>{const k=cueOf(r);if(k&&!meta.has(k))meta.set(k,r)});
+    regs.forEach(r=>{const k=schoolKey(r);if(k&&!meta.has(k))meta.set(k,r)});
     return schools.map(s=>{
       const m=meta.get(s.label)||{}, a=attSchool.get(s.label)||0;
       return {

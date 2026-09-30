@@ -769,7 +769,10 @@
       status:previousAction?.status==='finalizada'?'finalizada':'activa',
       finalizedAt:previousAction?.status==='finalizada'?(previousAction.finalizedAt||null):null
     };
-    dataset.actions=dataset.actions.filter(x=>x.code!==code).concat(previousAction?{...previousAction,...p.action}:p.action);
+    const mergedAction=p.importInfo?.bajasOnly&&previousAction
+      ? {...previousAction,status:p.action.status,finalizedAt:p.action.finalizedAt}
+      : (previousAction?{...previousAction,...p.action}:p.action);
+    dataset.actions=dataset.actions.filter(x=>x.code!==code).concat(mergedAction);
     if(p.importInfo?.bajasOnly){
       dataset.bajas=dataset.bajas.filter(x=>x.actionCode!==code).concat(dedupe(p.bajas||[],r=>[r.actionCode,idOf(r),r.bajaDate,r.reason].join('|')));
       applyBajasToRegistrations(dataset.registrations.filter(x=>x.actionCode===code),dataset.bajas.filter(x=>x.actionCode===code));
@@ -782,7 +785,11 @@
     }
     applyMasterDataToDataset();
     const existedImport=dataset.imports.some(x=>x.code===code);
-    dataset.imports=dataset.imports.filter(x=>x.code!==code).concat({...p.importInfo,updated:existedImport,when:new Date().toISOString()});
+    const previousImport=dataset.imports.find(x=>x.code===code);
+    const mergedImport=p.importInfo?.bajasOnly&&previousImport
+      ? {...previousImport,bajas:p.importInfo.bajas,updated:true,when:new Date().toISOString()}
+      : {...p.importInfo,updated:existedImport,when:new Date().toISOString()};
+    dataset.imports=dataset.imports.filter(x=>x.code!==code).concat(mergedImport);
   }
 
   async function handleFiles(files){
@@ -826,7 +833,8 @@
 
     const okCount=results.filter(x=>x.ok).length;
     if(okCount){
-      ['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterDate','filterTutor','filterArea','filterVenue','filterShift','excludeDate'].forEach(id=>{const el=$('#'+id);if(el)el.value=''});
+      ['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterTutor','filterArea','filterVenue','filterShift','excludeDate'].forEach(id=>{const el=$('#'+id);if(el)el.value=''});
+      setSelectedValues($('#filterDate'),[]);if($('#filterDateManual'))$('#filterDateManual').value='';
       ['globalSearch','excludeSurname'].forEach(id=>{const el=$('#'+id);if(el)el.value=''});
       if($('#savedFilterSelect'))$('#savedFilterSelect').value='';
       if($('#deleteFilterBtn'))$('#deleteFilterBtn').disabled=true;
@@ -865,7 +873,7 @@
           <div><span class="import-code">${esc(r.code)}</span> · <strong>${esc(r.title)}</strong></div>
           <div class="action-card-badges"><span class="action-status-badge ${isFinal?'finished':'active'}">${statusLabel}</span><span class="badge">${badge}</span></div>
         </div>
-        <div class="import-meta">${r.proposals||0} comisiones · ${r.registrations||0} inscripciones · ${r.attendance||0} asistencias${when?' · '+esc(when):''}${esc(finalized)}</div>
+        <div class="import-meta">${r.proposals||0} comisiones · ${r.registrations||0} inscripciones · ${r.attendance||0} asistencias · ${r.bajas||0} bajas${when?' · '+esc(when):''}${esc(finalized)}</div>
         <div class="action-card-controls">
           <button type="button" class="btn ghost compact" data-toggle-action-status="${esc(r.code)}">${isFinal?'Reabrir acción':'Marcar como finalizada'}</button>
         </div>
@@ -1278,13 +1286,16 @@
     regs.forEach(r=>{const k=schoolKey(r);if(k&&!schoolMeta.has(k))schoolMeta.set(k,r)});
     $('#schoolTable').innerHTML=schools.slice(0,80).map(s=>{
       const a=attSchool.get(s.label)||0,m=schoolMeta.get(s.label)||{};
-      return `<tr><td>${esc(m.cue||'—')}</td><td>${esc(upper(m.school)||'—')}</td><td>${esc(upper(m.dependency)||'—')}</td><td>${s.value}</td><td>${a}</td><td>${rate(a,s.value).toLocaleString('es-AR')}%</td></tr>`
+      return `<tr><td>${esc(m.cue||'Sin CUE')}</td><td>${esc(upper(m.school)||'—')}</td><td>${esc(upper(m.dependency)||'—')}</td><td>${s.value}</td><td>${a}</td><td>${rate(a,s.value).toLocaleString('es-AR')}%</td></tr>`
     }).join('') || '<tr><td colspan="6" class="empty">Sin datos.</td></tr>';
 
     const absentById=new Map();
     regs.filter(r=>!attIds.has(idOf(r))).forEach(r=>{const id=idOf(r);if(id&&!absentById.has(id))absentById.set(id,r)});
     const absent=[...absentById.values()];
     $('#absentTable').innerHTML=absent.slice(0,250).map(r=>`<tr><td>${esc(cleanDni(r.dni)||'—')}</td><td>${esc(r.name||r.email||'—')}</td><td>${esc(upper(r.school)||'—')}</td><td>${esc(formatDate(r.registrationDate)||'—')}</td><td>${esc(upper(r.dependency)||'—')}</td><td>${esc(upper(statusNorm(r.status))||'—')}</td><td>${esc(r.commissionCode||'—')}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">No hay inscriptos ausentes con estos filtros.</td></tr>';
+
+    const bajas=(filtered.bajas||[]).slice().sort((a,b)=>String(b.bajaDate||'').localeCompare(String(a.bajaDate||'')));
+    $('#bajasTable').innerHTML=bajas.slice(0,500).map(r=>`<tr><td>${esc(cleanDni(r.dni)||'—')}</td><td>${esc(r.name||r.email||'—')}</td><td>${esc(formatDate(r.bajaDate)||'—')}</td><td>${esc(upper(r.school)||'—')}</td><td>${esc(r.actionCode||'—')}</td><td>${esc(r.commissionCode||'—')}</td><td>${esc(r.reason||'—')}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">No hay bajas para los filtros actuales.</td></tr>';
   }
 
   function chart(id,type,labels,datasets,extra={}){
@@ -1751,6 +1762,21 @@
     }));
   }
 
+  function bajasExportRows(){
+    return (filtered.bajas||[]).map(r=>({
+      DNI:cleanDni(r.dni)||'',
+      DOCENTE:r.name||r.email||'',
+      EMAIL:r.email||'',
+      'FECHA BAJA':formatDate(r.bajaDate)||'',
+      ACCIÓN:r.actionCode||'',
+      COMISIÓN:r.commissionCode||'',
+      ESCUELA:upper(r.school)||'',
+      CUE:r.cue||'',
+      DEPENDENCIA:upper(r.dependency)||'',
+      MOTIVO:r.reason||''
+    }));
+  }
+
   function commissionExportRows(){
     const regs=groupUnique(filtered.registrations,r=>r.commissionCode).sort((a,b)=>b.value-a.value);
     const attMap=new Map(groupUnique(filtered.attendance,r=>r.commissionCode).map(x=>[x.label,x.value]));
@@ -1795,8 +1821,9 @@
     const attIds=new Set(atts.map(idOf).filter(Boolean));
     const metrics=eventMetrics(regs,atts);
     const filters=filterSummaryPairs();
-    const currentDate=$('#filterDate').value;
-    const currentMetric=currentDate?metrics.find(x=>x.date===currentDate):(metrics.at(-1)||null);
+    const selectedDates=currentFilters().dates||[];
+    const selectedMetrics=selectedDates.length?metrics.filter(x=>selectedDates.includes(x.date)):metrics;
+    const currentMetric=selectedMetrics.length===1?selectedMetrics[0]:(selectedMetrics.at(-1)||null);
 
     const summary=[
       {INDICADOR:'Generado',VALOR:new Date().toLocaleString('es-AR')},
@@ -1809,8 +1836,9 @@
       {INDICADOR:'Docentes asistentes únicos',VALOR:attIds.size},
       {INDICADOR:'Asistencia %',VALOR:rate(attIds.size,regIds.size)},
       {INDICADOR:'Presentismo %',VALOR:currentMetric?.presentism??''},
-      {INDICADOR:'Escuelas representadas',VALOR:unique(regs.map(cueOf).filter(Boolean)).length},
-      {INDICADOR:'Escuelas participantes',VALOR:unique(atts.map(cueOf).filter(Boolean)).length},
+      {INDICADOR:'Escuelas representadas',VALOR:unique(regs.map(schoolKey).filter(Boolean)).length},
+      {INDICADOR:'Escuelas participantes',VALOR:unique(atts.map(schoolKey).filter(Boolean)).length},
+      {INDICADOR:'Bajas cruzadas',VALOR:(filtered.bajas||[]).length},
       {INDICADOR:'Comisiones',VALOR:unique(regs.map(x=>x.commissionCode)).length},
       {INDICADOR:'Registros de asistencia',VALOR:atts.length}
     ];
@@ -1834,6 +1862,7 @@
     appendJsonSheet(wb,'Ausentes',absentExportRows());
     appendJsonSheet(wb,'Detalle',detailExportRows());
     appendJsonSheet(wb,'Asistencias',attendanceExportRows());
+    appendJsonSheet(wb,'Bajas',bajasExportRows());
 
     XLSX.writeFile(wb,exportFileStem()+'.xlsx',{compression:true});
     toast('Excel exportado con los filtros actuales');
@@ -1873,6 +1902,7 @@
       $('#'+id).addEventListener('change',applyFilters);
     });
     $('#filterDate').addEventListener('change',applyFilters);
+    $('#filterDateManual').addEventListener('input',applyFilters);
     $('#filterAction').addEventListener('input',()=>{
       const v=$('#filterAction').value.trim();
       if(!v || dataset.actions.some(x=>x.code===v))refreshFilterOptions();
@@ -1885,7 +1915,8 @@
     $('#saveFilterBtn').addEventListener('click',saveCurrentFilter);
     $('#deleteFilterBtn').addEventListener('click',deleteSavedFilter);
     $('#clearFilters').addEventListener('click',()=>{
-      ['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterDate','filterTutor','filterArea','filterVenue','filterShift'].forEach(id=>$('#'+id).value='');
+      ['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterTutor','filterArea','filterVenue','filterShift'].forEach(id=>$('#'+id).value='');
+      setSelectedValues($('#filterDate'),[]);$('#filterDateManual').value='';
       $('#excludeDate').value='';$('#excludeSurname').value='';
       $('#globalSearch').value='';$('#savedFilterSelect').value='';$('#deleteFilterBtn').disabled=true;applyFilters();
     });

@@ -359,16 +359,92 @@
     return explicit?.[1] || '';
   }
 
+  function schoolCanonical(v=''){
+    const replacements={
+      esc:'escuela',tec:'tecnica',educ:'educacion',sup:'superior',gral:'general',
+      ing:'ingeniero',dr:'doctor',prof:'profesor',pte:'presidente',sta:'santa',
+      sto:'santo',ntra:'nuestra',sra:'senora',lib:'libertador',com:'comercio',
+      ens:'escuela normal superior',eem:'escuela educacion media',cap:'capitan',
+      tte:'teniente',art:'artilleria',cnel:'coronel',mons:'monsenor'
+    };
+    let tokens=normalize(v).split(/\s+/).filter(Boolean).flatMap(t=>(replacements[t]||t).split(' '));
+    tokens=tokens.filter(t=>!['sede','ereingreso','reingreso'].includes(t));
+    if(tokens.length>=2 && tokens.at(-2)==='de' && /^\d{1,2}$/.test(tokens.at(-1)) && Number(tokens.at(-1))<=21){
+      tokens=tokens.slice(0,-2);
+    }
+    return tokens.map(t=>/^\d+$/.test(t)?String(Number(t)):t).join(' ');
+  }
+
+  function schoolType(v=''){
+    const s=schoolCanonical(v);
+    if(s.includes('tecnica'))return 'tecnica';
+    if(s.includes('comercio'))return 'comercio';
+    if(s.includes('educacion media'))return 'media';
+    if(s.includes('normal superior'))return 'normal';
+    if(s.includes('educacion artistica'))return 'artistica';
+    if(s.includes('colegio'))return 'colegio';
+    if(s.includes('liceo'))return 'liceo';
+    if(s.includes('instituto'))return 'instituto';
+    return '';
+  }
+
+  function schoolNumberDistrict(v=''){
+    const original=String(v||'');
+    const n=normalize(original);
+    let number=Number(n.match(/\bn\s*0*(\d{1,2})\b/)?.[1]||0)||null;
+    let district=Number(n.match(/\bde\s*0*(\d{1,2})\b/)?.[1]||0)||null;
+    const slash=original.match(/[Nn][°ºo¬]?\s*0*(\d{1,2})\s*\/\s*0*(\d{1,2})/);
+    if(slash){number=Number(slash[1]);district=Number(slash[2])}
+    return {number,district};
+  }
+
+  function schoolTokens(v=''){
+    const stop=new Set(['escuela','colegio','instituto','liceo','educacion','educativa','media','tecnica','superior','normal','en','de','del','la','el','los','las','n','general','doctor','ingeniero','profesor','presidente']);
+    return new Set(schoolCanonical(v).split(' ').filter(t=>t.length>2 && !/^\d+$/.test(t) && !stop.has(t)));
+  }
+
+  function schoolSimilarity(a,b){
+    const A=schoolTokens(a), B=schoolTokens(b);
+    let inter=0; for(const t of A)if(B.has(t))inter++;
+    const union=new Set([...A,...B]).size;
+    const coverage=inter/Math.max(1,Math.min(A.size,B.size));
+    const jaccard=inter/Math.max(1,union);
+    const fa=schoolNumberDistrict(a), fb=schoolNumberDistrict(b);
+    if(fa.number!==null && fb.number!==null && fa.number!==fb.number)return -1;
+    if(fa.district!==null && fb.district!==null && fa.district!==fb.district)return -1;
+    const ta=schoolType(a),tb=schoolType(b);
+    return .6*coverage+.3*jaccard
+      +(ta&&tb&&ta===tb?.15:0)
+      +(fa.number!==null&&fb.number===fa.number?.12:0)
+      +(fa.district!==null&&fb.district===fa.district?.15:0);
+  }
+
   function schoolMasterIndexes(){
     const schools=dataset.masters?.schools||[];
-    const byAnexo=new Map(), byCue=new Map(), byName=new Map();
+    const byAnexo=new Map(), byCue=new Map(), byName=new Map(), byCanonical=new Map(), byTypeNumber=new Map(), byTypeNumberDistrict=new Map();
+    const prepared=[];
     for(const s of schools){
       const ca=cleanCueAnexo(s.cueanexo), cue=cleanCue(s.cue), name=normalize(s.nombre_norm||s.nombre||'');
+      const canonical=schoolCanonical(s.nombre||'');
+      const type=schoolType(s.nombre||'');
+      const nd=schoolNumberDistrict(s.nombre||'');
       if(ca)byAnexo.set(ca,s);
       if(cue){if(!byCue.has(cue))byCue.set(cue,[]);byCue.get(cue).push(s)}
       if(name){if(!byName.has(name))byName.set(name,[]);byName.get(name).push(s)}
+      if(canonical){if(!byCanonical.has(canonical))byCanonical.set(canonical,[]);byCanonical.get(canonical).push(s)}
+      if(type && nd.number!==null){
+        const k=type+'|'+nd.number;
+        if(!byTypeNumber.has(k))byTypeNumber.set(k,[]);
+        byTypeNumber.get(k).push(s);
+        if(nd.district!==null){
+          const kd=k+'|'+nd.district;
+          if(!byTypeNumberDistrict.has(kd))byTypeNumberDistrict.set(kd,[]);
+          byTypeNumberDistrict.get(kd).push(s);
+        }
+      }
+      prepared.push(s);
     }
-    return {byAnexo,byCue,byName};
+    return {byAnexo,byCue,byName,byCanonical,byTypeNumber,byTypeNumberDistrict,prepared};
   }
 
   function findMasterSchool(row,index=schoolMasterIndexes()){
@@ -386,9 +462,34 @@
       }
       if(candidates.length===1)return candidates[0];
     }
+
     if(n){
       const byName=index.byName.get(n)||[];
       if(byName.length===1)return byName[0];
+    }
+
+    const canonical=schoolCanonical(cleanSchool(raw)||row?.school||'');
+    if(canonical){
+      const exact=index.byCanonical.get(canonical)||[];
+      if(exact.length===1)return exact[0];
+    }
+
+    const nd=schoolNumberDistrict(raw), type=schoolType(raw);
+    if(type && nd.number!==null && nd.district!==null){
+      const structured=index.byTypeNumberDistrict.get(type+'|'+nd.number+'|'+nd.district)||[];
+      if(structured.length===1)return structured[0];
+    }
+    if(type && nd.number!==null){
+      const numbered=index.byTypeNumber.get(type+'|'+nd.number)||[];
+      if(numbered.length===1 && schoolSimilarity(raw,numbered[0].nombre)>=.45)return numbered[0];
+    }
+
+    if(raw){
+      const ranked=index.prepared
+        .map(s=>({s,score:schoolSimilarity(raw,s.nombre||'')}))
+        .filter(x=>x.score>=0)
+        .sort((a,b)=>b.score-a.score);
+      if(ranked.length && ranked[0].score>=.68 && (ranked.length===1 || ranked[0].score-ranked[1].score>=.10)) return ranked[0].s;
     }
     return null;
   }
@@ -914,7 +1015,9 @@
 
   function filterSnapshot(){ return {...currentFilters()}; }
   function applyFilterSnapshot(f={}){
-    const map={action:'filterAction',school:'filterSchool',dependency:'filterDependency',sector:'filterSector',comuna:'filterComuna',status:'filterStatus',date:'filterDate',tutor:'filterTutor',area:'filterArea',venue:'filterVenue',shift:'filterShift',q:'globalSearch'};
+    if($('#filterAction'))$('#filterAction').value=f.action||'';
+    refreshFilterOptions();
+    const map={school:'filterSchool',dependency:'filterDependency',sector:'filterSector',comuna:'filterComuna',status:'filterStatus',date:'filterDate',tutor:'filterTutor',area:'filterArea',venue:'filterVenue',shift:'filterShift',q:'globalSearch'};
     for(const [k,id] of Object.entries(map)){const el=$('#'+id); if(el) el.value=f[k]||''}
     setMultiValues($('#excludeSurname'),f.excludeSurnames||f.excludeSurname||[]);
     setMultiValues($('#excludeDate'),f.excludeDates||f.excludeDate||[]);
@@ -1495,11 +1598,15 @@
       COMISIÓN:r.commissionCode||'',
       ESCUELA:upper(r.school)||'',
       CUE:r.cue||'',
+      CUEANEXO:r.cueAnexo||'',
       DEPENDENCIA:upper(r.dependency)||'',
       'SECTOR DE GESTIÓN':upper(r.sector)||'',
       COMUNA:upper(r.comuna)||'',
       ESTADO:upper(statusNorm(r.status))||'',
       ÁREA:r.area||'',
+      'ÁREA CLASIFICADA':r.areaClass||'',
+      CARGO:r.cargo||'',
+      'CARGO CLASIFICADO':r.cargoClass||'',
       FORMACIÓN:r.formation||'',
       SEDE:r.venue||'',
       TURNO:r.shift||'',

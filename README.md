@@ -1,4 +1,4 @@
-# Analizador COPES
+# Análisis de acciones
 
 Dashboard web para consolidar, analizar y visualizar inscripciones y asistencias de acciones formativas.
 

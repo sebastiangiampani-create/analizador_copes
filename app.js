@@ -148,7 +148,7 @@
         setStorageUi('connected');
         return true;
       }catch(e){
-        console.warn('Clave COPES guardada inválida o conexión caída',e);
+        console.warn('Clave de acceso guardada inválida o conexión caída',e);
         localStorage.removeItem(REMOTE_KEY_STORAGE);
         key='';
       }
@@ -1628,7 +1628,7 @@
     const f=currentFilters();
     const action=f.action || 'todas';
     const date=f.date || new Date().toISOString().slice(0,10);
-    return ('COPES_'+action+'_'+date).replace(/[^A-Za-z0-9_-]+/g,'_');
+    return ('Analisis_de_acciones_'+action+'_'+date).replace(/[^A-Za-z0-9_-]+/g,'_');
   }
 
   function filterSummaryPairs(){

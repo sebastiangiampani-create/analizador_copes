@@ -406,14 +406,14 @@
   <div id="storageModal" class="storage-modal" hidden>
     <div class="storage-modal-card">
       <div class="storage-lock">●</div>
-      <h3>Conectar guardado permanente</h3>
-      <p>Ingresá la clave del Análisis de acciones. Se guarda solamente en este navegador y permite recuperar las cargas desde Supabase.</p>
+      <h3>Conectar guardado online</h3>
+      <p>La conexión con Supabase es obligatoria para cargar nuevas bases. La clave se guarda solamente en este navegador; al conectar, las acciones que todavía estén locales se migran y se verifican online.</p>
       <form id="storageKeyForm">
         <input id="storageKeyInput" type="password" autocomplete="current-password" placeholder="Clave de acceso" required />
         <div id="storageKeyError" class="storage-key-error"></div>
         <div class="storage-modal-actions">
-          <button id="storageKeyCancel" type="button" class="btn ghost">Ahora no</button>
-          <button type="submit" class="btn primary">Conectar</button>
+          <button id="storageKeyCancel" type="button" class="btn ghost">Solo consultar</button>
+          <button type="submit" class="btn primary">Conectar y sincronizar</button>
         </div>
       </form>
     </div>

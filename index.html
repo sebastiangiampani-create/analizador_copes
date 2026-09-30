@@ -101,7 +101,11 @@
               <input id="filterStatus" list="filterStatusList" type="text" autocomplete="off" placeholder="Activo, Baja..." />
               <datalist id="filterStatusList"></datalist>
             </label>
-            <label>FECHA<input id="filterDate" type="date" /></label>
+            <label>FECHAS
+              <select id="filterDate" multiple size="4" title="Podés seleccionar más de una fecha"></select>
+              <input id="filterDateManual" type="text" autocomplete="off" placeholder="También podés escribir: 12/08/2026, 26/08/2026" />
+              <small class="filter-help">Seleccioná varias fechas o escribilas separadas por coma.</small>
+            </label>
             <label>Tutor / capacitador
               <input id="filterTutor" list="filterTutorList" type="text" autocomplete="off" placeholder="Escribí o elegí..." />
               <datalist id="filterTutorList"></datalist>
@@ -180,6 +184,7 @@
           <article><span>Acciones cargadas</span><strong id="insightActions">0</strong></article>
           <article><span>Inscriptos sin asistencia</span><strong id="insightNoShow">0</strong></article>
           <article><span>Escuelas sin asistencia</span><strong id="insightSchoolsNoShow">0</strong></article>
+          <article><span>Bajas cruzadas</span><strong id="insightBajas">0</strong></article>
         </div>
 
         <div class="section-heading">
@@ -224,7 +229,7 @@
 
         <div class="chart-grid compact-grid">
           <article class="panel">
-            <div class="panel-head"><div><h3>Escuelas</h3><p>Top por CUE con asistentes únicos</p></div></div>
+            <div class="panel-head"><div><h3>Escuelas</h3><p>Docentes por escuela</p></div></div>
             <div class="chart-wrap"><canvas id="schoolChart"></canvas></div>
           </article>
           <article class="panel">
@@ -251,12 +256,16 @@
 
         <div class="table-grid">
           <article class="panel">
-            <div class="panel-head"><div><h3>Escuelas con participación</h3><p>Contabilizadas por CUE</p></div></div>
+            <div class="panel-head"><div><h3>Escuelas con participación</h3><p>Por CUE; si falta CUE, se identifica por nombre de escuela</p></div></div>
             <div class="table-scroll"><table><thead><tr><th>CUE</th><th>ESCUELA</th><th>DEPENDENCIA</th><th>Inscriptos</th><th>Asistentes</th><th>%</th></tr></thead><tbody id="schoolTable"></tbody></table></div>
           </article>
           <article class="panel">
             <div class="panel-head"><div><h3>Inscriptos sin asistencia</h3><p>Nómina según filtros activos</p></div></div>
             <div class="table-scroll"><table><thead><tr><th>DNI</th><th>Docente</th><th>ESCUELA</th><th>FECHA</th><th>DEPENDENCIA</th><th>ESTADO</th><th>Comisión</th></tr></thead><tbody id="absentTable"></tbody></table></div>
+          </article>
+          <article class="panel wide baja-panel">
+            <div class="panel-head"><div><h3>BAJAS</h3><p>Se cruzan por DNI o correo con las inscripciones y actualizan el estado del docente.</p></div><span class="panel-chip">Cruce automático</span></div>
+            <div class="table-scroll"><table><thead><tr><th>DNI</th><th>Docente</th><th>Fecha de baja</th><th>ESCUELA</th><th>Acción</th><th>Comisión</th><th>Motivo / observación</th></tr></thead><tbody id="bajasTable"></tbody></table></div>
           </article>
         </div>
       </section>
@@ -275,7 +284,7 @@
               <p>Excel o CSV. No hace falta borrar la carga anterior: al volver a subir C0832, C0855, etc., se reemplaza solamente esa acción.</p>
               <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" multiple hidden />
               <button id="pickFiles" class="btn primary">Elegir archivos</button>
-              <small>Podés elegir nuevamente el mismo archivo actualizado. El sistema reemplaza la versión anterior por código de acción.</small>
+              <small>Podés elegir nuevamente el mismo archivo actualizado. Si incluye una hoja llamada BAJAS, se cruza automáticamente por DNI/correo. Un archivo solo de BAJAS debe incluir el código C#### en el nombre.</small>
             </div>
           </article>
           <article class="panel">

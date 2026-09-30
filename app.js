@@ -802,20 +802,34 @@
     }).join('');
   }
 
-  function fillSelect(sel,values,label='Todos'){
-    const old=sel.value; sel.innerHTML=`<option value="">${label}</option>`+sortAlpha(unique(values)).map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join(''); if([...sel.options].some(o=>o.value===old))sel.value=old;
+  function fillDatalist(id,values,formatter=v=>v,labels=null){
+    const list=$('#'+id);
+    if(!list)return;
+    const vals=sortAlpha(unique(values));
+    list.innerHTML=vals.map(v=>{
+      const label=labels?.[v] || formatter(v);
+      return `<option value="${esc(v)}"${label&&label!==v?' label="'+esc(label)+'"':''}></option>`;
+    }).join('');
   }
-  function selectedValues(sel){ return sel?[...sel.selectedOptions].map(o=>o.value).filter(Boolean):[]; }
-  function fillMultiSelect(sel,values,formatter=v=>v){
-    if(!sel)return;
-    const old=new Set(selectedValues(sel));
-    sel.innerHTML=sortAlpha(unique(values)).map(v=>`<option value="${esc(v)}">${esc(formatter(v))}</option>`).join('');
-    [...sel.options].forEach(o=>{o.selected=old.has(o.value)});
+  function splitManualList(v=''){
+    return unique(String(v||'').split(/[;,\n]+/).map(x=>x.trim()).filter(Boolean));
   }
-  function setMultiValues(sel,values=[]){
-    if(!sel)return;
-    const wanted=new Set((Array.isArray(values)?values:[values]).filter(Boolean));
-    [...sel.options].forEach(o=>{o.selected=wanted.has(o.value)});
+  function normalizeManualDate(v=''){
+    const s=String(v||'').trim();
+    if(/^\d{4}-\d{2}-\d{2}$/.test(s))return s;
+    const m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+    if(!m)return '';
+    const y=m[3].length===2?'20'+m[3]:m[3];
+    return `${y}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  }
+  function setManualList(el,values=[]){
+    if(!el)return;
+    el.value=(Array.isArray(values)?values:[values]).filter(Boolean).join(', ');
+  }
+  function textMatch(value,filter){
+    const f=normalize(filter||'');
+    if(!f)return true;
+    return normalize(value||'').includes(f);
   }
 
   function currentFilters(){
@@ -831,24 +845,24 @@
       area:$('#filterArea').value,
       venue:$('#filterVenue').value,
       shift:$('#filterShift').value,
-      excludeSurnames:selectedValues($('#excludeSurname')).map(normalize),
-      excludeDates:selectedValues($('#excludeDate')),
+      excludeSurnames:splitManualList($('#excludeSurname').value).map(normalize),
+      excludeDates:splitManualList($('#excludeDate').value).map(normalizeManualDate).filter(Boolean),
       q:normalize($('#globalSearch').value)
     };
   }
   function rowDate(r){ return r.eventDate || r.registrationDate || r.capturedAt || ''; }
   function matchesBase(r,f){
-    if(f.action && r.actionCode!==f.action)return false;
-    if(f.school && r.school!==f.school)return false;
-    if(f.dependency && r.dependency!==f.dependency)return false;
-    if(f.sector && r.sector!==f.sector)return false;
-    if(f.comuna && r.comuna!==f.comuna)return false;
-    if(f.status && statusNorm(r.status)!==f.status)return false;
+    if(f.action && !textMatch(r.actionCode,f.action))return false;
+    if(f.school && !textMatch(r.school,f.school))return false;
+    if(f.dependency && !textMatch(r.dependency,f.dependency))return false;
+    if(f.sector && !textMatch(r.sector,f.sector))return false;
+    if(f.comuna && !textMatch(r.comuna,f.comuna))return false;
+    if(f.status && !textMatch(statusNorm(r.status),f.status))return false;
     if((f.excludeSurnames||[]).some(x=>normalize(surnameOf(r)).includes(x)))return false;
-    if(f.tutor && !String(r.tutor||'').includes(f.tutor))return false;
-    if(f.area && r.area!==f.area)return false;
-    if(f.venue && r.venue!==f.venue)return false;
-    if(f.shift && r.shift!==f.shift)return false;
+    if(f.tutor && !textMatch(r.tutor,f.tutor))return false;
+    if(f.area && !textMatch(r.area,f.area))return false;
+    if(f.venue && !textMatch(r.venue,f.venue))return false;
+    if(f.shift && !textMatch(r.shift,f.shift))return false;
     if(f.q){
       const hay=normalize([r.dni,r.name,r.email,r.school,r.cue,r.dependency,r.sector,r.comuna,r.status,rowDate(r),r.region,r.area,r.commissionCode,r.tutor,r.venue].join(' '));
       if(!hay.includes(f.q))return false;
@@ -894,31 +908,26 @@
   }
 
   function refreshFilterOptions(){
-    const actionSelect=$('#filterAction');
-    const oldAction=actionSelect?.value||'';
-    if(actionSelect){
-      actionSelect.innerHTML='<option value="">Todas</option>'+sortAlpha(dataset.actions.map(x=>x.code)).map(code=>{
-        const a=dataset.actions.find(x=>x.code===code)||{};
-        const state=a.status==='finalizada'?'Finalizada':'Activa';
-        return `<option value="${esc(code)}">${esc(code)} · ${state}</option>`;
-      }).join('');
-      if([...actionSelect.options].some(o=>o.value===oldAction))actionSelect.value=oldAction;
-    }
-    const action=$('#filterAction')?.value || '';
-    const regs=action ? dataset.registrations.filter(x=>x.actionCode===action) : dataset.registrations;
-    const props=action ? dataset.proposals.filter(x=>x.actionCode===action) : dataset.proposals;
-    fillSelect($('#filterSchool'),regs.map(x=>x.school));
-    fillSelect($('#filterDependency'),regs.map(x=>x.dependency));
-    fillSelect($('#filterSector'),regs.map(x=>x.sector));
-    fillSelect($('#filterComuna'),regs.map(x=>x.comuna));
-    fillSelect($('#filterStatus'),regs.map(x=>statusNorm(x.status)).filter(Boolean));
-    fillSelect($('#filterTutor'),props.flatMap(x=>x.tutors||[]));
-    fillSelect($('#filterArea'),regs.map(x=>x.area).concat(props.map(x=>x.area)));
-    fillSelect($('#filterVenue'),regs.map(x=>x.venue).concat(props.map(x=>x.venue)));
-    fillSelect($('#filterShift'),regs.map(x=>x.shift).concat(props.map(x=>x.shift)));
-    fillMultiSelect($('#excludeSurname'),regs.map(surnameOf).filter(Boolean));
-    const atts=action ? dataset.attendance.filter(x=>x.actionCode===action) : dataset.attendance;
-    fillMultiSelect($('#excludeDate'),atts.map(x=>x.eventDate).filter(Boolean),formatDate);
+    const action=$('#filterAction')?.value.trim() || '';
+    const exactAction=dataset.actions.some(x=>x.code===action)?action:'';
+    const actionLabels={};
+    dataset.actions.forEach(a=>{actionLabels[a.code]=a.code+' · '+(a.status==='finalizada'?'Finalizada':'Activa')});
+    fillDatalist('filterActionList',dataset.actions.map(x=>x.code),v=>v,actionLabels);
+
+    const regs=exactAction ? dataset.registrations.filter(x=>x.actionCode===exactAction) : dataset.registrations;
+    const props=exactAction ? dataset.proposals.filter(x=>x.actionCode===exactAction) : dataset.proposals;
+    fillDatalist('filterSchoolList',regs.map(x=>x.school));
+    fillDatalist('filterDependencyList',regs.map(x=>x.dependency));
+    fillDatalist('filterSectorList',regs.map(x=>x.sector));
+    fillDatalist('filterComunaList',regs.map(x=>x.comuna));
+    fillDatalist('filterStatusList',regs.map(x=>statusNorm(x.status)).filter(Boolean));
+    fillDatalist('filterTutorList',props.flatMap(x=>x.tutors||[]));
+    fillDatalist('filterAreaList',regs.map(x=>x.area).concat(props.map(x=>x.area)));
+    fillDatalist('filterVenueList',regs.map(x=>x.venue).concat(props.map(x=>x.venue)));
+    fillDatalist('filterShiftList',regs.map(x=>x.shift).concat(props.map(x=>x.shift)));
+    fillDatalist('excludeSurnameList',regs.map(surnameOf).filter(Boolean));
+    const atts=exactAction ? dataset.attendance.filter(x=>x.actionCode===exactAction) : dataset.attendance;
+    fillDatalist('excludeDateList',atts.map(x=>x.eventDate).filter(Boolean),formatDate);
     renderSavedFilters();
   }
 
@@ -997,11 +1006,11 @@
     );
 
     filtered.proposals=dataset.proposals.filter(p=>{
-      if(f.action && p.actionCode!==f.action)return false;
-      if(f.tutor && !(p.tutors||[]).includes(f.tutor))return false;
-      if(f.area && p.area!==f.area)return false;
-      if(f.venue && p.venue!==f.venue)return false;
-      if(f.shift && p.shift!==f.shift)return false;
+      if(f.action && !textMatch(p.actionCode,f.action))return false;
+      if(f.tutor && !(p.tutors||[]).some(x=>textMatch(x,f.tutor)))return false;
+      if(f.area && !textMatch(p.area,f.area))return false;
+      if(f.venue && !textMatch(p.venue,f.venue))return false;
+      if(f.shift && !textMatch(p.shift,f.shift))return false;
 
       const hasPeopleLevelFilter=!!(
         f.school || f.dependency || f.sector || f.comuna || f.status ||
@@ -1019,8 +1028,8 @@
     refreshFilterOptions();
     const map={school:'filterSchool',dependency:'filterDependency',sector:'filterSector',comuna:'filterComuna',status:'filterStatus',date:'filterDate',tutor:'filterTutor',area:'filterArea',venue:'filterVenue',shift:'filterShift',q:'globalSearch'};
     for(const [k,id] of Object.entries(map)){const el=$('#'+id); if(el) el.value=f[k]||''}
-    setMultiValues($('#excludeSurname'),f.excludeSurnames||f.excludeSurname||[]);
-    setMultiValues($('#excludeDate'),f.excludeDates||f.excludeDate||[]);
+    setManualList($('#excludeSurname'),f.excludeSurnames||f.excludeSurname||[]);
+    setManualList($('#excludeDate'),(f.excludeDates||f.excludeDate||[]).map(v=>/^\d{4}-\d{2}-\d{2}$/.test(v)?formatDate(v):v));
     applyFilters();
   }
   function renderSavedFilters(){
@@ -1758,7 +1767,16 @@
     ['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('drag')}));
     ['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove('drag')}));
     dz.addEventListener('drop',e=>handleFiles([...e.dataTransfer.files]));
-    ['filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterDate','filterTutor','filterArea','filterVenue','filterShift','excludeDate','excludeSurname'].forEach(id=>$('#'+id).addEventListener('change',applyFilters));
+    ['filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterTutor','filterArea','filterVenue','filterShift','excludeDate','excludeSurname'].forEach(id=>{
+      $('#'+id).addEventListener('input',applyFilters);
+      $('#'+id).addEventListener('change',applyFilters);
+    });
+    $('#filterDate').addEventListener('change',applyFilters);
+    $('#filterAction').addEventListener('input',()=>{
+      const v=$('#filterAction').value.trim();
+      if(!v || dataset.actions.some(x=>x.code===v))refreshFilterOptions();
+      applyFilters();
+    });
     $('#filterAction').addEventListener('change',()=>{refreshFilterOptions();applyFilters()});
     $('#globalSearch').addEventListener('input',applyFilters);
     $('#detailSearch').addEventListener('input',renderDetail);
@@ -1767,7 +1785,7 @@
     $('#deleteFilterBtn').addEventListener('click',deleteSavedFilter);
     $('#clearFilters').addEventListener('click',()=>{
       ['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterDate','filterTutor','filterArea','filterVenue','filterShift'].forEach(id=>$('#'+id).value='');
-      setMultiValues($('#excludeDate'),[]);setMultiValues($('#excludeSurname'),[]);
+      $('#excludeDate').value='';$('#excludeSurname').value='';
       $('#globalSearch').value='';$('#savedFilterSelect').value='';$('#deleteFilterBtn').disabled=true;applyFilters();
     });
     $('#printBtn').addEventListener('click',printDashboard);

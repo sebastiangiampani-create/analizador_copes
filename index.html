@@ -77,22 +77,56 @@
             </div>
           </div>
           <div class="filter-bar">
-            <label>Acción<select id="filterAction"></select></label>
-            <label>ESCUELA<select id="filterSchool"></select></label>
-            <label>DEPENDENCIA<select id="filterDependency"></select></label>
-            <label>SECTOR DE GESTIÓN<select id="filterSector"></select></label>
-            <label>COMUNA<select id="filterComuna"></select></label>
-            <label>ESTADO<select id="filterStatus"></select></label>
+            <label>Acción
+              <input id="filterAction" list="filterActionList" type="text" autocomplete="off" placeholder="Escribí o elegí..." />
+              <datalist id="filterActionList"></datalist>
+            </label>
+            <label>ESCUELA
+              <input id="filterSchool" list="filterSchoolList" type="text" autocomplete="off" placeholder="Escribí o elegí..." />
+              <datalist id="filterSchoolList"></datalist>
+            </label>
+            <label>DEPENDENCIA
+              <input id="filterDependency" list="filterDependencyList" type="text" autocomplete="off" placeholder="Escribí o elegí..." />
+              <datalist id="filterDependencyList"></datalist>
+            </label>
+            <label>SECTOR DE GESTIÓN
+              <input id="filterSector" list="filterSectorList" type="text" autocomplete="off" placeholder="Escribí o elegí..." />
+              <datalist id="filterSectorList"></datalist>
+            </label>
+            <label>COMUNA
+              <input id="filterComuna" list="filterComunaList" type="text" autocomplete="off" placeholder="Escribí o elegí..." />
+              <datalist id="filterComunaList"></datalist>
+            </label>
+            <label>ESTADO
+              <input id="filterStatus" list="filterStatusList" type="text" autocomplete="off" placeholder="Activo, Baja..." />
+              <datalist id="filterStatusList"></datalist>
+            </label>
             <label>FECHA<input id="filterDate" type="date" /></label>
-            <label>Tutor / capacitador<select id="filterTutor"></select></label>
-            <label>Área<select id="filterArea"></select></label>
-            <label>Sede<select id="filterVenue"></select></label>
-            <label>Turno<select id="filterShift"></select></label>
+            <label>Tutor / capacitador
+              <input id="filterTutor" list="filterTutorList" type="text" autocomplete="off" placeholder="Escribí o elegí..." />
+              <datalist id="filterTutorList"></datalist>
+            </label>
+            <label>Área
+              <input id="filterArea" list="filterAreaList" type="text" autocomplete="off" placeholder="Escribí o elegí..." />
+              <datalist id="filterAreaList"></datalist>
+            </label>
+            <label>Sede
+              <input id="filterVenue" list="filterVenueList" type="text" autocomplete="off" placeholder="Escribí o elegí..." />
+              <datalist id="filterVenueList"></datalist>
+            </label>
+            <label>Turno
+              <input id="filterShift" list="filterShiftList" type="text" autocomplete="off" placeholder="Escribí o elegí..." />
+              <datalist id="filterShiftList"></datalist>
+            </label>
             <label>Excluir apellidos
-              <select id="excludeSurname" multiple size="4" title="Podés seleccionar más de un apellido"></select>
+              <input id="excludeSurname" list="excludeSurnameList" type="text" autocomplete="off" placeholder="Pérez, González, López" />
+              <datalist id="excludeSurnameList"></datalist>
+              <small class="filter-help">Podés escribir varios, separados por coma.</small>
             </label>
             <label>Excluir fechas
-              <select id="excludeDate" multiple size="4" title="Podés seleccionar más de una fecha"></select>
+              <input id="excludeDate" list="excludeDateList" type="text" autocomplete="off" placeholder="12/08/2026, 26/08/2026" />
+              <datalist id="excludeDateList"></datalist>
+              <small class="filter-help">Admite dd/mm/aaaa o aaaa-mm-dd, separados por coma.</small>
             </label>
             <label class="search-label">Buscar<input id="globalSearch" type="search" placeholder="DNI, escuela, docente, tutor..." /></label>
           </div>

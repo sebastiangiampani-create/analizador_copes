@@ -93,17 +93,17 @@
     card?.classList.remove('storage-connected','storage-local','storage-error');
     if(mode==='connected'){
       title.textContent='Supabase conectado';
-      text.textContent=detail || 'Las cargas quedan guardadas permanentemente.';
+      text.textContent=detail || 'Las cargas están guardadas online y verificadas.';
       btn.textContent='Supabase: conectado';
       card?.classList.add('storage-connected');
     }else if(mode==='error'){
-      title.textContent='Guardado local';
-      text.textContent=detail || 'No se pudo conectar con Supabase.';
+      title.textContent='Supabase sin conexión';
+      text.textContent=detail || 'No se puede cargar una base hasta recuperar la conexión.';
       btn.textContent='Supabase: reconectar';
       card?.classList.add('storage-error');
     }else{
-      title.textContent='Guardado local';
-      text.textContent=detail || 'Conectá Supabase para no perder las cargas.';
+      title.textContent='Supabase requerido';
+      text.textContent=detail || 'Conectá Supabase. Las nuevas bases deben quedar guardadas online.';
       btn.textContent='Supabase: conectar';
       card?.classList.add('storage-local');
     }
@@ -217,11 +217,58 @@
     dataset.imports=dataset.imports.filter(x=>x.code!==code).concat(payload.importInfo||{code,title:payload.action.title||code,when:new Date().toISOString()});
   }
 
+  function remoteExpectedCounts(payload){
+    return {
+      proposals:Array.isArray(payload?.proposals)?payload.proposals.length:0,
+      registrations:Array.isArray(payload?.registrations)?payload.registrations.length:0,
+      attendance:Array.isArray(payload?.attendance)?payload.attendance.length:0,
+      bajas:Array.isArray(payload?.bajas)?payload.bajas.length:0,
+      tutors:Array.isArray(payload?.tutors)?payload.tutors.length:0
+    };
+  }
+
+  async function verifyRemotePayload(payload){
+    const code=payload?.action?.code;
+    const expected=remoteExpectedCounts(payload);
+    const check=await remoteRequest('get_action',{actionCode:code});
+    const row=check?.action;
+    if(!row) throw new Error('remote_verify_missing');
+    const got={
+      proposals:Number(row.total_propuestas||0),
+      registrations:Number(row.total_inscripciones||0),
+      attendance:Number(row.total_asistencias||0),
+      bajas:Number(row.total_bajas||0),
+      tutors:Number(row.total_tutores||0)
+    };
+    for(const key of Object.keys(expected)){
+      if(got[key]!==expected[key]) throw new Error('remote_verify_mismatch_'+key);
+    }
+    return row;
+  }
+
+  async function saveRemotePayload(payload,{retries=2}={}){
+    if(!remoteReady)throw new Error('remote_not_ready');
+    const code=payload?.action?.code;
+    if(!/^C\d{4}$/.test(code||''))throw new Error('invalid_action_code');
+    let lastError=null;
+    for(let attempt=0;attempt<=retries;attempt++){
+      try{
+        await remoteRequest('save_action',{actionCode:code,payload});
+        await verifyRemotePayload(payload);
+        return true;
+      }catch(e){
+        lastError=e;
+        if(attempt<retries) await new Promise(r=>setTimeout(r,350*(attempt+1)));
+      }
+    }
+    throw lastError||new Error('remote_save_failed');
+  }
+
   async function saveRemoteAction(code){
     if(!remoteReady)return false;
     const payload=buildActionSnapshot(code);
     if(!payload)return false;
-    await remoteRequest('save_action',{actionCode:code,payload});
+    await saveRemotePayload(payload);
     return true;
   }
 
@@ -250,30 +297,38 @@
     const localFilters=structuredClone(dataset.savedFilters||[]);
 
     const connected=await ensureRemoteAccess({interactive:true});
-    if(!connected)return;
+    if(!connected){
+      setStorageUi('error','Conexión obligatoria para cargar bases. Lo que ya esté en este navegador todavía no está garantizado online.');
+      return false;
+    }
 
     try{
-      const remote=await remoteRequest('load');
-      const rows=remote.actions||[];
-      const remoteCodes=new Set(rows.map(r=>r.action_code));
-      const localOnly=localSnapshots.filter(p=>!remoteCodes.has(p.action.code));
+      let remote=await remoteRequest('load');
+      const remoteByCode=new Map((remote.actions||[]).map(r=>[r.action_code,r]));
+      let migrated=0;
 
-      if(rows.length){
-        dataset=structuredClone(EMPTY);
-        for(const row of rows) applyActionSnapshot(row.payload);
-        for(const p of localOnly){
-          applyActionSnapshot(p);
-          await remoteRequest('save_action',{actionCode:p.action.code,payload:p});
+      for(const payload of localSnapshots){
+        const code=payload.action.code;
+        const remoteRow=remoteByCode.get(code);
+        const localWhen=Date.parse(payload?.importInfo?.when||'')||0;
+        const remoteWhen=Date.parse(remoteRow?.updated_at||'')||0;
+        if(!remoteRow || (localWhen && localWhen>remoteWhen)){
+          await saveRemotePayload(payload);
+          migrated++;
         }
-        dataset.sources=Array.isArray(remote.config?.sources)?remote.config.sources:localSources;
-        dataset.savedFilters=Array.isArray(remote.config?.savedFilters)?remote.config.savedFilters:localFilters;
-      }else if(localSnapshots.length){
-        for(const p of localSnapshots){
-          await remoteRequest('save_action',{actionCode:p.action.code,payload:p});
-        }
-        await saveRemoteConfig();
       }
 
+      if(localSources.length || localFilters.length){
+        const mergedSources=Array.isArray(remote.config?.sources)&&remote.config.sources.length ? remote.config.sources : localSources;
+        const mergedFilters=Array.isArray(remote.config?.savedFilters)&&remote.config.savedFilters.length ? remote.config.savedFilters : localFilters;
+        await remoteRequest('save_config',{payload:{sources:mergedSources,savedFilters:mergedFilters}});
+      }
+
+      remote=await remoteRequest('load');
+      dataset=structuredClone(EMPTY);
+      for(const row of (remote.actions||[])) applyActionSnapshot(row.payload);
+      dataset.sources=Array.isArray(remote.config?.sources)?remote.config.sources:[];
+      dataset.savedFilters=Array.isArray(remote.config?.savedFilters)?remote.config.savedFilters:[];
       dataset.masters={
         schools:Array.isArray(remote.masters?.schools)?remote.masters.schools:[],
         areas:Array.isArray(remote.masters?.areas)?remote.masters.areas:[],
@@ -282,12 +337,15 @@
       applyMasterDataToDataset();
 
       await saveState();
-      setStorageUi('connected',(dataset.actions.length||0)+' acción(es) · '+(dataset.masters.schools.length||0)+' escuelas maestras.');
+      const onlineCount=(remote.actions||[]).length;
+      setStorageUi('connected',onlineCount+' acción(es) guardada(s) online y verificadas'+(migrated?' · '+migrated+' migrada(s) desde este navegador':'')+'.');
+      return true;
     }catch(e){
       console.error('Error inicializando persistencia remota',e);
       remoteReady=false;
-      setStorageUi('error','No se pudo recuperar Supabase. La copia local sigue intacta.');
-      toast('No se pudo conectar con Supabase; se mantiene la copia local.');
+      setStorageUi('error','No se pudo verificar el guardado online. Las cargas locales no se consideran respaldadas.');
+      toast('Supabase no pudo verificarse. No cargues nuevas bases hasta reconectar.');
+      return false;
     }
   }
 
@@ -976,7 +1034,16 @@
 
   async function handleFiles(files){
     if(!files.length)return;
-    $('#importSummary').textContent='Procesando archivos...';
+    if(!remoteReady){
+      const connected=await ensureRemoteAccess({interactive:true});
+      if(!connected){
+        setStorageUi('error','No se cargó ningún archivo: primero hay que conectar Supabase.');
+        toast('Carga cancelada: Supabase debe estar conectado.');
+        if($('#fileInput'))$('#fileInput').value='';
+        return;
+      }
+    }
+    $('#importSummary').textContent='Procesando y guardando online...';
     const results=[];
     const successfulCodes=[];
     for(const file of files){
@@ -1017,18 +1084,17 @@
     await saveState();
 
     let remoteSaved=0;
-    if(successfulCodes.length){
-      if(!remoteReady) await ensureRemoteAccess({interactive:true});
-      if(remoteReady){
-        for(const code of unique(successfulCodes)){
-          try{ if(await saveRemoteAction(code)) remoteSaved++; }
-          catch(e){
-            console.error('Error guardando '+code+' en Supabase',e);
-            remoteReady=false;
-            setStorageUi('error','La carga quedó local; reconectá para subirla a Supabase.');
-            break;
-          }
-        }
+    let remoteError=null;
+    const codesToSave=unique(successfulCodes);
+    for(const code of codesToSave){
+      try{
+        if(await saveRemoteAction(code)) remoteSaved++;
+      }catch(e){
+        console.error('Error guardando '+code+' en Supabase',e);
+        remoteError=e;
+        remoteReady=false;
+        setStorageUi('error','Hay una carga pendiente: no se pudo verificar '+code+' en Supabase.');
+        break;
       }
     }
 
@@ -1048,8 +1114,13 @@
       const parts=[];
       if(updatedCount)parts.push(updatedCount+' acción(es) actualizada(s)');
       if(newCount)parts.push(newCount+' acción(es) nueva(s)');
-      const storageMsg=remoteSaved ? ' · guardado en Supabase' : (remoteReady?'':' · copia local');
-      toast((parts.join(' · ')||okCount+' archivo(s) procesado(s)')+storageMsg+'. Panel actualizado.');
+      if(remoteError || remoteSaved!==codesToSave.length){
+        switchView('imports');
+        toast('ATENCIÓN: la carga quedó pendiente de guardado online. Reconectá Supabase y volvé a sincronizar.');
+      }else{
+        setStorageUi('connected',dataset.actions.length+' acción(es) guardada(s) online y verificadas.');
+        toast((parts.join(' · ')||okCount+' archivo(s) procesado(s)')+' · guardado online verificado.');
+      }
     }else{
       renderAll();
       switchView('imports');
@@ -2183,27 +2254,9 @@
       }
     });
     $('#storageStatusBtn')?.addEventListener('click',async()=>{
-      if(remoteReady){
-        try{
-          const remote=await remoteRequest('load');
-          for(const row of (remote.actions||[])) applyActionSnapshot(row.payload);
-          if(Array.isArray(remote.config?.sources)) dataset.sources=remote.config.sources;
-          if(Array.isArray(remote.config?.savedFilters)) dataset.savedFilters=remote.config.savedFilters;
-          dataset.masters={
-            schools:Array.isArray(remote.masters?.schools)?remote.masters.schools:[],
-            areas:Array.isArray(remote.masters?.areas)?remote.masters.areas:[],
-            cargos:Array.isArray(remote.masters?.cargos)?remote.masters.cargos:[]
-          };
-          applyMasterDataToDataset();
-          await saveState();renderAll();
-          toast('Datos recargados desde Supabase');
-        }catch(e){
-          console.error(e);remoteReady=false;setStorageUi('error');
-        }
-      }else{
-        const ok=await ensureRemoteAccess({interactive:true});
-        if(ok){await initRemotePersistence();renderAll()}
-      }
+      const ok=await initRemotePersistence();
+      renderAll();
+      if(ok)toast('Supabase sincronizado y verificado.');
     });
     $('#storageKeyForm')?.addEventListener('submit',e=>{
       e.preventDefault();

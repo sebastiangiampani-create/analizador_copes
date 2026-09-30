@@ -2,7 +2,7 @@
   const DB_NAME = 'analizador_copes_v1';
   const STORE = 'state';
   const KEY = 'dataset';
-  const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], imports: [], sources: [], savedFilters: [], masters:{schools:[],areas:[],cargos:[]} };
+  const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], bajas: [], imports: [], sources: [], savedFilters: [], masters:{schools:[],areas:[],cargos:[]} };
   const REMOTE_ENDPOINT = 'https://qchnawvoensqnynsuhfu.supabase.co/functions/v1/copes-state';
   const REMOTE_KEY_STORAGE = 'analizador_copes_workspace_key_v1';
   let remoteReady = false;
@@ -11,7 +11,7 @@
   let dataset = structuredClone(EMPTY);
   let charts = {};
   const PALETTE = ['#167566','#2f7fe0','#7b68c7','#d18a3a','#3aa7a0','#7d8c99','#bd6a5a','#5d9b63','#8a6bb8','#c49a3f'];
-  let filtered = { registrations: [], attendance: [], proposals: [] };
+  let filtered = { registrations: [], attendance: [], bajas: [], proposals: [] };
 
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => [...document.querySelectorAll(s)];
@@ -38,6 +38,7 @@
     return d.length===8 ? d : '';
   };
   const cueOf = (r) => cleanCue(r?.cue);
+  const schoolKey = (r) => cueOf(r) || (normalize(r?.school||'') ? 'school:'+normalize(r.school) : '');
   const surnameOf = (r) => String(r?.surname || '').trim() || String(r?.name||'').trim().split(/\s+/).slice(-1)[0] || '';
   const statusNorm = (v='') => {
     const n=normalize(v);
@@ -69,6 +70,7 @@
     const db=await openDb();
     const value=await new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readonly');const r=tx.objectStore(STORE).get(KEY);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});
     db.close(); dataset={...structuredClone(EMPTY), ...(value || {})};
+    if(!Array.isArray(dataset.bajas)) dataset.bajas=[];
     if(!Array.isArray(dataset.sources)) dataset.sources=[];
     if(!Array.isArray(dataset.savedFilters)) dataset.savedFilters=[];
     if(!dataset.masters || typeof dataset.masters!=='object') dataset.masters={schools:[],areas:[],cargos:[]};
@@ -191,6 +193,7 @@
       proposals:dataset.proposals.filter(x=>x.actionCode===code),
       registrations:dataset.registrations.filter(x=>x.actionCode===code),
       attendance:dataset.attendance.filter(x=>x.actionCode===code),
+      bajas:dataset.bajas.filter(x=>x.actionCode===code),
       importInfo
     };
   }
@@ -207,6 +210,7 @@
     dataset.proposals=dataset.proposals.filter(x=>x.actionCode!==code).concat(payload.proposals||[]);
     dataset.registrations=dataset.registrations.filter(x=>x.actionCode!==code).concat(payload.registrations||[]);
     dataset.attendance=dataset.attendance.filter(x=>x.actionCode!==code).concat(payload.attendance||[]);
+    dataset.bajas=dataset.bajas.filter(x=>x.actionCode!==code).concat(payload.bajas||[]);
     dataset.imports=dataset.imports.filter(x=>x.code!==code).concat(payload.importInfo||{code,title:payload.action.title||code,when:new Date().toISOString()});
   }
 
@@ -548,7 +552,37 @@
     const idx=schoolMasterIndexes();
     dataset.registrations=(dataset.registrations||[]).map(r=>enrichMasterRow(r,idx));
     dataset.attendance=(dataset.attendance||[]).map(r=>enrichMasterRow(r,idx));
+    dataset.bajas=(dataset.bajas||[]).map(r=>enrichMasterRow(r,idx));
     dataset.proposals=(dataset.proposals||[]).map(p=>({...p,areaClass:classifyArea(p.area)||p.areaClass||''}));
+  }
+
+  function applyBajasToRegistrations(registrations,bajas){
+    const byPerson=new Map();
+    for(const r of registrations||[]){
+      const id=idOf(r);
+      if(!id)continue;
+      if(!byPerson.has(id))byPerson.set(id,[]);
+      byPerson.get(id).push(r);
+    }
+    for(const b of bajas||[]){
+      const id=idOf(b);
+      if(!id)continue;
+      const matches=(byPerson.get(id)||[]).filter(r=>!b.actionCode||r.actionCode===b.actionCode);
+      const preferred=b.commissionCode ? matches.filter(r=>r.commissionCode===b.commissionCode) : matches;
+      const targets=preferred.length?preferred:matches;
+      for(const r of targets){
+        r.status='Baja';
+        if(b.bajaDate && (!r.bajaDate || b.bajaDate<r.bajaDate))r.bajaDate=b.bajaDate;
+        if(b.bajaDate)r.statusDate=b.bajaDate;
+      }
+      const ref=targets[0]||matches[0];
+      if(ref){
+        for(const key of ['name','firstName','surname','email','school','schoolRaw','cue','cueAnexo','dependency','sector','comuna','area','areaClass','cargo','cargoClass','formation','venue','shift','tutor']){
+          if(!String(b[key]||'').trim())b[key]=ref[key]||'';
+        }
+        if(!b.commissionCode)b.commissionCode=ref.commissionCode||'';
+      }
+    }
   }
 
   function parseWorkbook(file, wb){
@@ -560,6 +594,7 @@
     const proposalsRows=sheetBy('propuesta');
     const regRows=sheetBy('inscrip');
     const attRows=Object.entries(allSheets).find(([n])=>normalize(n)==='asistencias')?.[1] || sheetBy('asisten');
+    const bajasRows=sheetBy('baja');
     const year=yearIn(file.name,[...proposalsRows.slice(0,4),...regRows.slice(0,4)]);
     const title=actionTitle(file.name,code);
 
@@ -676,6 +711,36 @@
       return enrichMasterRow(row);
     }).filter(r=>idOf(r));
 
+    const bajas=bajasRows.map(raw=>{
+      const m=mapRow(raw);
+      const firstName=String(pickExact(raw,['Nombre','Nombre/s'])||pick(m,['Nombre','Nombre/s'])||'').trim();
+      const surname=String(pickExact(raw,['Apellido','Apellido/s'])||pick(m,['Apellido','Apellido/s'])||'').trim();
+      const schoolRaw=pickExact(raw,['ESCUELA','Escuela','Establecimiento','Escuela / Establecimiento'])||pick(m,['Establecimiento','Escuela / Establecimiento','Escuela']);
+      const cueAnexo=String(pick(m,['CUEANEXO','Cueanexo','CUE Anexo'])||extractCueAnexo(schoolRaw)||'').trim();
+      const row={
+        actionCode:code,
+        commissionCode:(codeIn(pick(m,['Codigo','Código','Comision','Comisión','Taller','Propuesta']))||'').toUpperCase(),
+        dni:String(pick(m,['DNI'])||'').replace(/\.0$/,'').trim(),
+        firstName,surname,
+        name:[firstName,surname].filter(Boolean).join(' ').trim(),
+        email:String(pick(m,['Correo','Email'])||'').trim(),
+        schoolRaw:String(schoolRaw||'').trim(),
+        school:cleanSchool(schoolRaw),
+        cueAnexo,
+        cue:String(pick(m,['CUE','Codigo CUE','Código CUE'])||cleanCue(cueAnexo)||'').trim(),
+        dependency:String(pick(m,['DEPENDENCIA','Dependencia','Dep. Fun'])||parseDependencyFromSchool(schoolRaw)||'').trim(),
+        sector:String(pick(m,['SECTOR DE GESTIÓN','Sector de Gestión','Sector de Gestion','Sector Gestión'])||'').trim(),
+        comuna:String(pick(m,['COMUNA','Comuna'])||'').trim(),
+        status:'Baja',
+        bajaDate:isoDate(pick(m,['FECHA BAJA','Fecha Baja','Fecha de Baja','Fecha','Fecha y hora']),year),
+        reason:String(pick(m,['MOTIVO','Motivo','Motivo de baja','Observaciones','Observación','Observacion'])||'').trim(),
+        source:file.name
+      };
+      return enrichMasterRow(row);
+    }).filter(r=>idOf(r));
+
+    applyBajasToRegistrations(registrations,bajas);
+
     const mismatches=[];
     for(const [sheetName,rows] of Object.entries(allSheets)){
       for(const row of rows.slice(0,4000)){
@@ -690,8 +755,8 @@
 
     return {
       action:{code,title,year,source:file.name},
-      proposals, registrations, attendance,
-      importInfo:{file:file.name,code,title,proposals:proposals.length,registrations:registrations.length,attendance:attendance.length,mismatches:mismatchSummary}
+      proposals, registrations, attendance, bajas,
+      importInfo:{file:file.name,code,title,proposals:proposals.length,registrations:registrations.length,attendance:attendance.length,bajas:bajas.length,bajasOnly:!proposalsRows.length&&!regRows.length&&!attRows.length&&bajas.length>0,mismatches:mismatchSummary}
     };
   }
 
@@ -704,10 +769,17 @@
       status:previousAction?.status==='finalizada'?'finalizada':'activa',
       finalizedAt:previousAction?.status==='finalizada'?(previousAction.finalizedAt||null):null
     };
-    dataset.actions=dataset.actions.filter(x=>x.code!==code).concat(p.action);
-    dataset.proposals=dataset.proposals.filter(x=>x.actionCode!==code).concat(p.proposals);
-    dataset.registrations=dataset.registrations.filter(x=>x.actionCode!==code).concat(dedupe(p.registrations,r=>[r.actionCode,r.commissionCode,idOf(r)].join('|')));
-    dataset.attendance=dataset.attendance.filter(x=>x.actionCode!==code).concat(dedupe(p.attendance,r=>[r.actionCode,r.commissionCode,idOf(r),r.encounter,r.eventDate,r.capturedAt].join('|')));
+    dataset.actions=dataset.actions.filter(x=>x.code!==code).concat(previousAction?{...previousAction,...p.action}:p.action);
+    if(p.importInfo?.bajasOnly){
+      dataset.bajas=dataset.bajas.filter(x=>x.actionCode!==code).concat(dedupe(p.bajas||[],r=>[r.actionCode,idOf(r),r.bajaDate,r.reason].join('|')));
+      applyBajasToRegistrations(dataset.registrations.filter(x=>x.actionCode===code),dataset.bajas.filter(x=>x.actionCode===code));
+    }else{
+      dataset.proposals=dataset.proposals.filter(x=>x.actionCode!==code).concat(p.proposals);
+      dataset.registrations=dataset.registrations.filter(x=>x.actionCode!==code).concat(dedupe(p.registrations,r=>[r.actionCode,r.commissionCode,idOf(r)].join('|')));
+      dataset.attendance=dataset.attendance.filter(x=>x.actionCode!==code).concat(dedupe(p.attendance,r=>[r.actionCode,r.commissionCode,idOf(r),r.encounter,r.eventDate,r.capturedAt].join('|')));
+      dataset.bajas=dataset.bajas.filter(x=>x.actionCode!==code).concat(dedupe(p.bajas||[],r=>[r.actionCode,idOf(r),r.bajaDate,r.reason].join('|')));
+      applyBajasToRegistrations(dataset.registrations.filter(x=>x.actionCode===code),dataset.bajas.filter(x=>x.actionCode===code));
+    }
     applyMasterDataToDataset();
     const existedImport=dataset.imports.some(x=>x.code===code);
     dataset.imports=dataset.imports.filter(x=>x.code!==code).concat({...p.importInfo,updated:existedImport,when:new Date().toISOString()});

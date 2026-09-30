@@ -258,3 +258,11 @@ tbody tr:hover{background:#f7faf9}
 .filter-bar input[list]{width:100%;min-width:0}
 .filter-help{display:block;margin-top:4px;font-size:8px;line-height:1.25;color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0}
 .filter-bar label:has(.filter-help){align-self:start}
+
+/* Fechas múltiples y BAJAS */
+.filter-bar #filterDate{min-height:82px}
+.filter-bar #filterDateManual{margin-top:5px}
+.baja-panel{grid-column:1/-1}
+.insight-strip{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:900px){.insight-strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.insight-strip{grid-template-columns:1fr}}

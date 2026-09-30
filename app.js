@@ -1028,8 +1028,10 @@
     refreshFilterOptions();
     const map={school:'filterSchool',dependency:'filterDependency',sector:'filterSector',comuna:'filterComuna',status:'filterStatus',date:'filterDate',tutor:'filterTutor',area:'filterArea',venue:'filterVenue',shift:'filterShift',q:'globalSearch'};
     for(const [k,id] of Object.entries(map)){const el=$('#'+id); if(el) el.value=f[k]||''}
-    setManualList($('#excludeSurname'),f.excludeSurnames||f.excludeSurname||[]);
-    setManualList($('#excludeDate'),(f.excludeDates||f.excludeDate||[]).map(v=>/^\d{4}-\d{2}-\d{2}$/.test(v)?formatDate(v):v));
+    const savedSurnames=Array.isArray(f.excludeSurnames)?f.excludeSurnames:(f.excludeSurname?[f.excludeSurname]:[]);
+    const savedDates=Array.isArray(f.excludeDates)?f.excludeDates:(f.excludeDate?[f.excludeDate]:[]);
+    setManualList($('#excludeSurname'),savedSurnames);
+    setManualList($('#excludeDate'),savedDates.map(v=>/^\d{4}-\d{2}-\d{2}$/.test(v)?formatDate(v):v));
     applyFilters();
   }
   function renderSavedFilters(){

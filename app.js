@@ -1137,8 +1137,10 @@
   }
 
   function currentFilters(){
+    const action=$('#filterAction').value.trim();
+    const exactAction=/^C\d{4}$/.test(action.toUpperCase()) && dataset.actions.some(x=>x.code===action.toUpperCase());
     return {
-      action:$('#filterAction').value,
+      action,
       school:$('#filterSchool').value,
       dependency:$('#filterDependency').value,
       sector:$('#filterSector').value,
@@ -1152,8 +1154,8 @@
       area:$('#filterArea').value,
       venue:$('#filterVenue').value,
       shift:$('#filterShift').value,
-      excludeSurnames:splitManualList($('#excludeSurname').value).map(normalize),
-      excludeDates:splitManualList($('#excludeDate').value).map(normalizeManualDate).filter(Boolean),
+      excludeSurnames:exactAction?splitManualList($('#excludeSurname').value).map(normalize):[],
+      excludeDates:exactAction?splitManualList($('#excludeDate').value).map(normalizeManualDate).filter(Boolean):[],
       q:normalize($('#globalSearch').value)
     };
   }
@@ -1364,6 +1366,12 @@
     else sel.value='';
     $('#saveFilterBtn').disabled=!exactAction;
     $('#deleteFilterBtn').disabled=!sel.value;
+    for(const id of ['excludeSurname','excludeDate']){
+      const el=$('#'+id);
+      if(!el)continue;
+      el.disabled=!exactAction;
+      el.title=exactAction?'Exclusión aplicada solo a '+exactAction:'Elegí una acción para usar exclusiones';
+    }
   }
   async function saveCurrentFilter(){
     const action=$('#filterAction')?.value.trim().toUpperCase()||'';
@@ -2161,7 +2169,7 @@
       ['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterTutor','filterArea','filterVenue','filterShift'].forEach(id=>$('#'+id).value='');
       setSelectedValues($('#filterDate'),[]);$('#filterDateManual').value='';
       $('#excludeDate').value='';$('#excludeSurname').value='';
-      $('#globalSearch').value='';$('#savedFilterSelect').value='';$('#deleteFilterBtn').disabled=true;applyFilters();
+      $('#globalSearch').value='';$('#savedFilterSelect').value='';$('#deleteFilterBtn').disabled=true;renderSavedFilters();applyFilters();
     });
     $('#printBtn').addEventListener('click',printDashboard);
     $('#excelBtn').addEventListener('click',exportExcel);

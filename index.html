@@ -88,8 +88,12 @@
             <label>Área<select id="filterArea"></select></label>
             <label>Sede<select id="filterVenue"></select></label>
             <label>Turno<select id="filterShift"></select></label>
-            <label>Excluir apellido<input id="excludeSurname" type="text" placeholder="Ej. Pérez" /></label>
-            <label>Excluir fecha<input id="excludeDate" type="date" /></label>
+            <label>Excluir apellidos
+              <select id="excludeSurname" multiple size="4" title="Podés seleccionar más de un apellido"></select>
+            </label>
+            <label>Excluir fechas
+              <select id="excludeDate" multiple size="4" title="Podés seleccionar más de una fecha"></select>
+            </label>
             <label class="search-label">Buscar<input id="globalSearch" type="search" placeholder="DNI, escuela, docente, tutor..." /></label>
           </div>
           <div id="actionLifecycleBar" class="action-lifecycle-bar" hidden>
@@ -122,7 +126,11 @@
           </article>
           <article class="kpi">
             <div class="kpi-icon">⌂</div>
-            <span>Escuelas representadas</span><strong id="kpiSchools">0</strong><small>con docentes inscriptos</small>
+            <span>Escuelas representadas</span><strong id="kpiSchools">0</strong><small>con docentes inscriptos · por CUE</small>
+          </article>
+          <article class="kpi accent-secondary">
+            <div class="kpi-icon">✓</div>
+            <span>Escuelas participantes</span><strong id="kpiParticipatingSchools">0</strong><small>con al menos un docente asistente · por CUE</small>
           </article>
           <article class="kpi">
             <div class="kpi-icon">▤</div>
@@ -145,19 +153,29 @@
         </div>
 
         <div class="chart-grid">
-          <article class="panel wide hero-chart">
-            <div class="panel-head"><div><h3>Asistencia y presentismo por FECHA</h3><p>Asistentes únicos, activos y % de presentismo por encuentro</p></div><span class="panel-chip">Tendencia</span></div>
+          <article class="panel">
+            <div class="panel-head"><div><h3>Presentismo por Fecha</h3><p>Cantidad de docentes asistentes únicos en cada encuentro</p></div><span class="panel-chip">Cantidad</span></div>
             <div class="chart-wrap tall"><canvas id="attendanceChart"></canvas></div>
           </article>
 
           <article class="panel">
-            <div class="panel-head"><div><h3>Por área</h3><p>Docentes inscriptos únicos</p></div></div>
-            <div class="chart-wrap"><canvas id="areaChart"></canvas></div>
+            <div class="panel-head"><div><h3>% de presentismo por Fecha</h3><p>Asistentes de la fecha / docentes activos en esa fecha</p></div><span class="panel-chip">Porcentaje</span></div>
+            <div class="chart-wrap tall"><canvas id="presentismPercentChart"></canvas></div>
+          </article>
+
+          <article class="panel wide">
+            <div class="panel-head"><div><h3>Inscriptos vs asistentes por área</h3><p>Comparación de docentes únicos según el área informada</p></div><span class="panel-chip">Comparativo</span></div>
+            <div class="chart-wrap tall"><canvas id="areaCompareChart"></canvas></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head"><div><h3>Docentes por área</h3><p>Según las 17 áreas de clasificación cargadas</p></div></div>
+            <div class="chart-wrap tall"><canvas id="areaChart"></canvas></div>
           </article>
 
           <article class="panel">
             <div class="panel-head"><div><h3>Por dependencia</h3><p>Participación institucional</p></div></div>
-            <div class="chart-wrap"><canvas id="dependencyChart"></canvas></div>
+            <div class="chart-wrap tall"><canvas id="dependencyChart"></canvas></div>
           </article>
 
           <article class="panel wide">
@@ -184,6 +202,10 @@
             <div class="chart-wrap"><canvas id="tutorChart"></canvas></div>
           </article>
           <article class="panel">
+            <div class="panel-head"><div><h3>Docentes por cargo</h3><p>Según clasificación de cargos</p></div></div>
+            <div class="chart-wrap chart-with-empty"><canvas id="cargoChart"></canvas><div id="cargoEmpty" class="chart-empty" hidden>La clasificación de cargos todavía está en elaboración.</div></div>
+          </article>
+          <article class="panel">
             <div class="panel-head"><div><h3>Turnos</h3><p>Distribución de asistentes</p></div></div>
             <div class="chart-wrap"><canvas id="shiftChart"></canvas></div>
           </article>
@@ -196,7 +218,7 @@
         <div class="table-grid">
           <article class="panel">
             <div class="panel-head"><div><h3>Escuelas con participación</h3><p>Contabilizadas por CUE</p></div></div>
-            <div class="table-scroll"><table><thead><tr><th>CUE</th><th>ESCUELA</th><th>DEPENDENCIA</th><th>SECTOR DE GESTIÓN</th><th>COMUNA</th><th>Inscriptos</th><th>Asistentes</th><th>%</th></tr></thead><tbody id="schoolTable"></tbody></table></div>
+            <div class="table-scroll"><table><thead><tr><th>CUE</th><th>ESCUELA</th><th>DEPENDENCIA</th><th>Inscriptos</th><th>Asistentes</th><th>%</th></tr></thead><tbody id="schoolTable"></tbody></table></div>
           </article>
           <article class="panel">
             <div class="panel-head"><div><h3>Inscriptos sin asistencia</h3><p>Nómina según filtros activos</p></div></div>

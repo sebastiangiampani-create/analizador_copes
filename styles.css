@@ -243,3 +243,13 @@ tbody tr:hover{background:#f7faf9}
 .action-card-controls{display:flex;justify-content:flex-end;margin-top:8px}
 @media(max-width:700px){.action-lifecycle-bar{align-items:flex-start;flex-direction:column}.action-lifecycle-bar .btn{width:100%}}
 @media print{.action-lifecycle-bar{display:none!important}}
+
+/* Variables maestras y filtros múltiples */
+.filter-bar select[multiple]{min-height:82px;padding:6px 8px}
+.filter-bar select[multiple] option{padding:4px 5px;border-radius:5px}
+.chart-with-empty{position:relative}
+.chart-empty{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:20px;color:var(--muted);font-size:10px;background:linear-gradient(180deg,rgba(255,255,255,.8),rgba(255,255,255,.95))}
+.chart-empty[hidden]{display:none}
+.kpi-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:900px){.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.kpi-grid{grid-template-columns:1fr}}

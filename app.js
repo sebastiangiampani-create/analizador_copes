@@ -2,7 +2,7 @@
   const DB_NAME = 'analizador_copes_v1';
   const STORE = 'state';
   const KEY = 'dataset';
-  const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], imports: [], sources: [], savedFilters: [] };
+  const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], imports: [], sources: [], savedFilters: [], masters:{schools:[],areas:[],cargos:[]} };
   const REMOTE_ENDPOINT = 'https://qchnawvoensqnynsuhfu.supabase.co/functions/v1/copes-state';
   const REMOTE_KEY_STORAGE = 'analizador_copes_workspace_key_v1';
   let remoteReady = false;
@@ -27,7 +27,18 @@
     const dni=cleanDni(r?.dni);
     return dni ? 'dni:'+dni : String(r?.email || r?.name || '').trim().toLowerCase();
   };
-  const cueOf = (r) => String(r?.cue || '').trim() || ('school:'+normalize(r?.school||''));
+  const cleanDigits = (v='') => String(v ?? '').replace(/\D+/g,'').trim();
+  const cleanCue = (v='') => {
+    const d=cleanDigits(v);
+    if(d.length===8) return d.slice(0,6);
+    return d.length===6 ? d : '';
+  };
+  const cleanCueAnexo = (v='') => {
+    const d=cleanDigits(v);
+    return d.length===8 ? d : '';
+  };
+  const cueOf = (r) => cleanCue(r?.cue);
+  const surnameOf = (r) => String(r?.surname || '').trim() || String(r?.name||'').trim().split(/\s+/).slice(-1)[0] || '';
   const statusNorm = (v='') => {
     const n=normalize(v);
     if(n.includes('baja') || n.includes('inactivo')) return 'Baja';
@@ -60,6 +71,10 @@
     db.close(); dataset={...structuredClone(EMPTY), ...(value || {})};
     if(!Array.isArray(dataset.sources)) dataset.sources=[];
     if(!Array.isArray(dataset.savedFilters)) dataset.savedFilters=[];
+    if(!dataset.masters || typeof dataset.masters!=='object') dataset.masters={schools:[],areas:[],cargos:[]};
+    if(!Array.isArray(dataset.masters.schools)) dataset.masters.schools=[];
+    if(!Array.isArray(dataset.masters.areas)) dataset.masters.areas=[];
+    if(!Array.isArray(dataset.masters.cargos)) dataset.masters.cargos=[];
   }
   async function clearState(){
     const db=await openDb();
@@ -252,8 +267,15 @@
         await saveRemoteConfig();
       }
 
+      dataset.masters={
+        schools:Array.isArray(remote.masters?.schools)?remote.masters.schools:[],
+        areas:Array.isArray(remote.masters?.areas)?remote.masters.areas:[],
+        cargos:Array.isArray(remote.masters?.cargos)?remote.masters.cargos:[]
+      };
+      applyMasterDataToDataset();
+
       await saveState();
-      setStorageUi('connected',(dataset.actions.length||0)+' acción(es) persistidas en Supabase.');
+      setStorageUi('connected',(dataset.actions.length||0)+' acción(es) · '+(dataset.masters.schools.length||0)+' escuelas maestras.');
     }catch(e){
       console.error('Error inicializando persistencia remota',e);
       remoteReady=false;
@@ -279,6 +301,15 @@
   }
   function pick(m, keys){
     for(const k of keys){const v=m[normalize(k)]; if(v!==null && v!==undefined && String(v).trim()!=='') return v}
+    return '';
+  }
+  function pickExact(raw, keys){
+    for(const k of keys){
+      if(Object.prototype.hasOwnProperty.call(raw||{},k)){
+        const v=raw[k];
+        if(v!==null && v!==undefined && String(v).trim()!=='') return v;
+      }
+    }
     return '';
   }
   function formatDate(v){
@@ -322,6 +353,103 @@
     return unique(String(v||'').split(/\n|;/).map(x=>x.trim().replace(/^[-•]+/,'').trim()).filter(Boolean).map(x=>x.replace(/\s*-\s*\d{7,8}\s*$/,'')));
   }
 
+  function extractCueAnexo(v=''){
+    const s=String(v||'');
+    const explicit=s.match(/(?:CUE\s*)?(\d{8})(?!\d)/i);
+    return explicit?.[1] || '';
+  }
+
+  function schoolMasterIndexes(){
+    const schools=dataset.masters?.schools||[];
+    const byAnexo=new Map(), byCue=new Map(), byName=new Map();
+    for(const s of schools){
+      const ca=cleanCueAnexo(s.cueanexo), cue=cleanCue(s.cue), name=normalize(s.nombre_norm||s.nombre||'');
+      if(ca)byAnexo.set(ca,s);
+      if(cue){if(!byCue.has(cue))byCue.set(cue,[]);byCue.get(cue).push(s)}
+      if(name){if(!byName.has(name))byName.set(name,[]);byName.get(name).push(s)}
+    }
+    return {byAnexo,byCue,byName};
+  }
+
+  function findMasterSchool(row,index=schoolMasterIndexes()){
+    const raw=String(row?.schoolRaw||row?.school||'');
+    const anexo=cleanCueAnexo(row?.cueAnexo)||extractCueAnexo(raw);
+    if(anexo && index.byAnexo.has(anexo)) return index.byAnexo.get(anexo);
+
+    const cue=cleanCue(row?.cue)||cleanCue(anexo);
+    const n=normalize(cleanSchool(raw)||row?.school||'');
+    if(cue){
+      const candidates=index.byCue.get(cue)||[];
+      if(n){
+        const named=candidates.find(s=>normalize(s.nombre_norm||s.nombre||'')===n);
+        if(named)return named;
+      }
+      if(candidates.length===1)return candidates[0];
+    }
+    if(n){
+      const byName=index.byName.get(n)||[];
+      if(byName.length===1)return byName[0];
+    }
+    return null;
+  }
+
+  function classifyArea(v=''){
+    const raw=String(v||'').trim();
+    if(!raw)return '';
+    const areas=dataset.masters?.areas||[];
+    const byNorm=new Map(areas.map(a=>[normalize(a.area_norm||a.area),a.area]));
+    const n=normalize(raw);
+    if(byNorm.has(n))return byNorm.get(n);
+    const aliases={
+      'arte':'Artes',
+      'educacion tecnologica':'Educ. Tecno./Tecno. de la Información',
+      'tecnologia de la informacion':'Educ. Tecno./Tecno. de la Información',
+      'economia y administracion':'Orientación en Economía y Administración',
+      'ciencias sociales y humanidades':'Orientación en Ciencias Sociales y Humanidades',
+      'comunicacion':'Orientación en Comunicación',
+      'informatica':'Orientación en Informática',
+      'matematica y fisica':'Orientación en Matemática y Física',
+      'literatura':'Orientación en Literatura'
+    };
+    return aliases[n] || '';
+  }
+
+  function classifyCargo(v=''){
+    const raw=String(v||'').trim();
+    if(!raw)return '';
+    const n=normalize(raw);
+    const item=(dataset.masters?.cargos||[]).find(x=>normalize(x.origen)===n);
+    return String(item?.categoria||raw).trim();
+  }
+
+  function enrichMasterRow(row,index=schoolMasterIndexes()){
+    const out={...row};
+    const master=findMasterSchool(out,index);
+    if(master){
+      out.school=master.nombre||out.school;
+      out.cue=cleanCue(master.cue)||out.cue||'';
+      out.cueAnexo=cleanCueAnexo(master.cueanexo)||out.cueAnexo||'';
+      out.sector=master.sector||out.sector||'';
+      out.comuna=master.departamento||out.comuna||'';
+      out.masterSchoolMatched=true;
+    }else{
+      out.cueAnexo=cleanCueAnexo(out.cueAnexo)||extractCueAnexo(out.schoolRaw||out.school||'');
+      out.cue=cleanCue(out.cue)||cleanCue(out.cueAnexo);
+      out.school=cleanSchool(out.schoolRaw||out.school||'')||out.school||'';
+      out.masterSchoolMatched=false;
+    }
+    out.areaClass=classifyArea(out.area)||out.areaClass||'';
+    out.cargoClass=classifyCargo(out.cargo)||out.cargoClass||'';
+    return out;
+  }
+
+  function applyMasterDataToDataset(){
+    const idx=schoolMasterIndexes();
+    dataset.registrations=(dataset.registrations||[]).map(r=>enrichMasterRow(r,idx));
+    dataset.attendance=(dataset.attendance||[]).map(r=>enrichMasterRow(r,idx));
+    dataset.proposals=(dataset.proposals||[]).map(p=>({...p,areaClass:classifyArea(p.area)||p.areaClass||''}));
+  }
+
   function parseWorkbook(file, wb){
     const code=mainCodeIn(file.name);
     if(!code) throw new Error('No se detectó un código de acción tipo C0000 en el nombre del archivo.');
@@ -343,7 +471,8 @@
       if(baseDate && !meetingCols.length) meetingCols.push({label:'Encuentro',text:formatDate(pick(m,['Fecha'])),date:baseDate});
       return {
         actionCode:code, code:pcode, commission,
-        area:String(pick(m,['Área','Area'])||'').trim(),
+        area:String(pickExact(raw,['Área','Area'])||pick(m,['Área','Area'])||'').trim(),
+        areaClass:classifyArea(pickExact(raw,['Área','Area'])||pick(m,['Área','Area'])||''),
         formation:String(pick(m,['Formación','Formacion'])||'').trim(),
         venue:String(pick(m,['Sede'])||'').trim(),
         shift:String(pick(m,['Turno','Horario'])||'').trim(),
@@ -361,16 +490,22 @@
       let pcode=codeIn(pick(m,['Codigo','Código','Taller','Propuesta'])) || code;
       pcode=pcode.toUpperCase();
       const p=pMap.get(pcode);
-      const schoolRaw=pick(m,['Establecimiento','Escuela / Establecimiento','Escuela']);
-      const school=cleanSchool(schoolRaw);
-      return {
+      const schoolRaw=pickExact(raw,['ESCUELA','Escuela','Establecimiento','Escuela / Establecimiento'])||pick(m,['Establecimiento','Escuela / Establecimiento','Escuela']);
+      const firstName=String(pickExact(raw,['Nombre','Nombre/s'])||pick(m,['Nombre','Nombre/s'])||'').trim();
+      const surname=String(pickExact(raw,['Apellido','Apellido/s'])||pick(m,['Apellido','Apellido/s'])||'').trim();
+      const areaValue=String(pickExact(raw,['Área','Area'])||pick(m,['Área','Area'])||p?.area||'').trim();
+      const cueAnexo=String(pick(m,['CUEANEXO','Cueanexo','CUE Anexo'])||extractCueAnexo(schoolRaw)||'').trim();
+      const row={
         actionCode:code, commissionCode:pcode,
         dni:String(pick(m,['DNI'])||'').replace(/\.0$/,'').trim(),
         cuil:String(pick(m,['Cuil','CUIL'])||'').trim(),
-        name:[pick(m,['Nombre','Nombre/s']),pick(m,['Apellido','Apellido/s'])].filter(Boolean).join(' ').trim(),
+        firstName,surname,
+        name:[firstName,surname].filter(Boolean).join(' ').trim(),
         email:String(pick(m,['Correo','Email'])||'').trim(),
-        school:String(pick(m,['ESCUELA','Escuela','Establecimiento','Escuela / Establecimiento'])||school||'').trim(),
-        cue:String(pick(m,['CUE','Codigo CUE','Código CUE'])||'').trim(),
+        schoolRaw:String(schoolRaw||'').trim(),
+        school:cleanSchool(schoolRaw),
+        cueAnexo,
+        cue:String(pick(m,['CUE','Codigo CUE','Código CUE'])||cleanCue(cueAnexo)||'').trim(),
         dependency:String(pick(m,['DEPENDENCIA','Dependencia','Dep. Fun'])||parseDependencyFromSchool(schoolRaw)||'').trim(),
         sector:String(pick(m,['SECTOR DE GESTIÓN','Sector de Gestión','Sector de Gestion','Sector Gestión'])||'').trim(),
         comuna:String(pick(m,['COMUNA','Comuna'])||'').trim(),
@@ -378,7 +513,9 @@
         statusDate:isoDate(pick(m,['FECHA ESTADO','Fecha Estado','Fecha de Estado']),year),
         bajaDate:isoDate(pick(m,['FECHA BAJA','Fecha Baja','Fecha de Baja']),year),
         region:String(pick(m,['DE','DE/Región','DE o Región'])||'').trim(),
-        area:String(pick(m,['Area','Área'])||p?.area||'').trim(),
+        area:areaValue,
+        areaClass:classifyArea(areaValue),
+        cargo:String(pickExact(raw,['Cargo','CARGO','Cargo docente'])||pick(m,['Cargo','Cargo docente'])||'').trim(),
         formation:String(pick(m,['Formación','Formacion','Tipo de Formación'])||p?.formation||'').trim(),
         venue:String(pick(m,['Sede'])||p?.venue||'').trim(),
         shift:String(pick(m,['Turno'])||p?.shift||'').trim(),
@@ -386,6 +523,8 @@
         registrationDate:isoDate(pick(m,['FECHA','Fecha','Fecha y hora']),year),
         source:file.name
       };
+      row.cargoClass=classifyCargo(row.cargo);
+      return enrichMasterRow(row);
     }).filter(r=>idOf(r));
 
     const attendance=attRows.map(raw=>{
@@ -400,20 +539,29 @@
         eventDate=meet?.date || '';
       }
       if(!eventDate) eventDate=isoDate(pick(m,['Fecha de encuentro','Fecha']),year);
-      const schoolRaw=pick(m,['Establecimiento','Escuela / Establecimiento','Escuela']);
-      return {
+      const schoolRaw=pickExact(raw,['ESCUELA','Escuela','Establecimiento','Escuela / Establecimiento'])||pick(m,['Establecimiento','Escuela / Establecimiento','Escuela']);
+      const firstName=String(pickExact(raw,['Nombre','Nombre/s'])||pick(m,['Nombre','Nombre/s'])||'').trim();
+      const surname=String(pickExact(raw,['Apellido','Apellido/s'])||pick(m,['Apellido','Apellido/s'])||'').trim();
+      const areaValue=String(pickExact(raw,['Área','Area'])||pick(m,['Área','Area'])||p?.area||'').trim();
+      const cueAnexo=String(pick(m,['CUEANEXO','Cueanexo','CUE Anexo'])||extractCueAnexo(schoolRaw)||'').trim();
+      const row={
         actionCode:code, commissionCode:pcode,
         dni:String(pick(m,['DNI'])||'').replace(/\.0$/,'').trim(),
-        name:[pick(m,['Nombre','Nombre/s']),pick(m,['Apellido','Apellido/s'])].filter(Boolean).join(' ').trim(),
+        firstName,surname,
+        name:[firstName,surname].filter(Boolean).join(' ').trim(),
         email:String(pick(m,['Correo','Email'])||'').trim(),
-        school:String(pick(m,['ESCUELA','Escuela','Establecimiento','Escuela / Establecimiento'])||cleanSchool(schoolRaw)||'').trim(),
-        cue:String(pick(m,['CUE','Codigo CUE','Código CUE'])||'').trim(),
+        schoolRaw:String(schoolRaw||'').trim(),
+        school:cleanSchool(schoolRaw),
+        cueAnexo,
+        cue:String(pick(m,['CUE','Codigo CUE','Código CUE'])||cleanCue(cueAnexo)||'').trim(),
         dependency:String(pick(m,['DEPENDENCIA','Dependencia','Dep. Fun'])||parseDependencyFromSchool(schoolRaw)||'').trim(),
         sector:String(pick(m,['SECTOR DE GESTIÓN','Sector de Gestión','Sector de Gestion','Sector Gestión'])||'').trim(),
         comuna:String(pick(m,['COMUNA','Comuna'])||'').trim(),
         status:statusNorm(pick(m,['ESTADO','Estado'])||''),
         region:String(pick(m,['DE/Región','DE','DE o Región'])||'').trim(),
-        area:String(pick(m,['Area','Área'])||p?.area||'').trim(),
+        area:areaValue,
+        areaClass:classifyArea(areaValue),
+        cargo:String(pickExact(raw,['Cargo','CARGO','Cargo docente'])||pick(m,['Cargo','Cargo docente'])||'').trim(),
         formation:String(pick(m,['Formación','Formacion','Tipo de Formación'])||p?.formation||'').trim(),
         venue:String(pick(m,['Sede'])||p?.venue||'').trim(),
         shift:String(pick(m,['Turno'])||p?.shift||'').trim(),
@@ -423,6 +571,8 @@
         capturedAt:isoDate(pick(m,['FECHA','Fecha','Fecha y hora']),year),
         source:file.name
       };
+      row.cargoClass=classifyCargo(row.cargo);
+      return enrichMasterRow(row);
     }).filter(r=>idOf(r));
 
     const mismatches=[];
@@ -457,6 +607,7 @@
     dataset.proposals=dataset.proposals.filter(x=>x.actionCode!==code).concat(p.proposals);
     dataset.registrations=dataset.registrations.filter(x=>x.actionCode!==code).concat(dedupe(p.registrations,r=>[r.actionCode,r.commissionCode,idOf(r)].join('|')));
     dataset.attendance=dataset.attendance.filter(x=>x.actionCode!==code).concat(dedupe(p.attendance,r=>[r.actionCode,r.commissionCode,idOf(r),r.encounter,r.eventDate,r.capturedAt].join('|')));
+    applyMasterDataToDataset();
     const existedImport=dataset.imports.some(x=>x.code===code);
     dataset.imports=dataset.imports.filter(x=>x.code!==code).concat({...p.importInfo,updated:existedImport,when:new Date().toISOString()});
   }
@@ -553,6 +704,18 @@
   function fillSelect(sel,values,label='Todos'){
     const old=sel.value; sel.innerHTML=`<option value="">${label}</option>`+sortAlpha(unique(values)).map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join(''); if([...sel.options].some(o=>o.value===old))sel.value=old;
   }
+  function selectedValues(sel){ return sel?[...sel.selectedOptions].map(o=>o.value).filter(Boolean):[]; }
+  function fillMultiSelect(sel,values,formatter=v=>v){
+    if(!sel)return;
+    const old=new Set(selectedValues(sel));
+    sel.innerHTML=sortAlpha(unique(values)).map(v=>`<option value="${esc(v)}">${esc(formatter(v))}</option>`).join('');
+    [...sel.options].forEach(o=>{o.selected=old.has(o.value)});
+  }
+  function setMultiValues(sel,values=[]){
+    if(!sel)return;
+    const wanted=new Set((Array.isArray(values)?values:[values]).filter(Boolean));
+    [...sel.options].forEach(o=>{o.selected=wanted.has(o.value)});
+  }
 
   function currentFilters(){
     return {
@@ -567,8 +730,8 @@
       area:$('#filterArea').value,
       venue:$('#filterVenue').value,
       shift:$('#filterShift').value,
-      excludeSurname:normalize($('#excludeSurname').value),
-      excludeDate:$('#excludeDate').value,
+      excludeSurnames:selectedValues($('#excludeSurname')).map(normalize),
+      excludeDates:selectedValues($('#excludeDate')),
       q:normalize($('#globalSearch').value)
     };
   }
@@ -580,7 +743,7 @@
     if(f.sector && r.sector!==f.sector)return false;
     if(f.comuna && r.comuna!==f.comuna)return false;
     if(f.status && statusNorm(r.status)!==f.status)return false;
-    if(f.excludeSurname && normalize(r.name).includes(f.excludeSurname))return false;
+    if((f.excludeSurnames||[]).some(x=>normalize(surnameOf(r)).includes(x)))return false;
     if(f.tutor && !String(r.tutor||'').includes(f.tutor))return false;
     if(f.area && r.area!==f.area)return false;
     if(f.venue && r.venue!==f.venue)return false;
@@ -601,7 +764,7 @@
   function matchesAttendance(r,f){
     if(!matchesBase(r,f))return false;
     if(f.date && r.eventDate!==f.date)return false;
-    if(f.excludeDate && r.eventDate===f.excludeDate)return false;
+    if((f.excludeDates||[]).includes(r.eventDate))return false;
     return true;
   }
 
@@ -623,7 +786,7 @@
       || index.byActionPerson.get([r.actionCode,person].join('|'));
     if(!reg)return r;
     const out={...r};
-    for(const key of ['school','cue','dependency','sector','comuna','status','region','area','formation','venue','shift','tutor']){
+    for(const key of ['school','schoolRaw','cue','cueAnexo','dependency','sector','comuna','status','region','area','areaClass','cargo','cargoClass','formation','venue','shift','tutor','firstName','surname']){
       if(out[key]===null || out[key]===undefined || String(out[key]).trim()==='') out[key]=reg[key]||'';
     }
     return out;
@@ -652,6 +815,9 @@
     fillSelect($('#filterArea'),regs.map(x=>x.area).concat(props.map(x=>x.area)));
     fillSelect($('#filterVenue'),regs.map(x=>x.venue).concat(props.map(x=>x.venue)));
     fillSelect($('#filterShift'),regs.map(x=>x.shift).concat(props.map(x=>x.shift)));
+    fillMultiSelect($('#excludeSurname'),regs.map(surnameOf).filter(Boolean));
+    const atts=action ? dataset.attendance.filter(x=>x.actionCode===action) : dataset.attendance;
+    fillMultiSelect($('#excludeDate'),atts.map(x=>x.eventDate).filter(Boolean),formatDate);
     renderSavedFilters();
   }
 
@@ -738,7 +904,7 @@
 
       const hasPeopleLevelFilter=!!(
         f.school || f.dependency || f.sector || f.comuna || f.status ||
-        f.date || f.excludeDate || f.excludeSurname || f.q
+        f.date || (f.excludeDates||[]).length || (f.excludeSurnames||[]).length || f.q
       );
       if(hasPeopleLevelFilter && !scopedCommissionCodes.has(p.code))return false;
       return true;
@@ -748,8 +914,10 @@
 
   function filterSnapshot(){ return {...currentFilters()}; }
   function applyFilterSnapshot(f={}){
-    const map={action:'filterAction',school:'filterSchool',dependency:'filterDependency',sector:'filterSector',comuna:'filterComuna',status:'filterStatus',date:'filterDate',tutor:'filterTutor',area:'filterArea',venue:'filterVenue',shift:'filterShift',excludeSurname:'excludeSurname',excludeDate:'excludeDate',q:'globalSearch'};
+    const map={action:'filterAction',school:'filterSchool',dependency:'filterDependency',sector:'filterSector',comuna:'filterComuna',status:'filterStatus',date:'filterDate',tutor:'filterTutor',area:'filterArea',venue:'filterVenue',shift:'filterShift',q:'globalSearch'};
     for(const [k,id] of Object.entries(map)){const el=$('#'+id); if(el) el.value=f[k]||''}
+    setMultiValues($('#excludeSurname'),f.excludeSurnames||f.excludeSurname||[]);
+    setMultiValues($('#excludeDate'),f.excludeDates||f.excludeDate||[]);
     applyFilters();
   }
   function renderSavedFilters(){
@@ -781,6 +949,7 @@
     if(!date) return st!=='Baja';
     if(r.registrationDate && r.registrationDate>date) return false;
     if(r.bajaDate) return date < r.bajaDate;
+    if(st==='Baja' && r.statusDate) return date < r.statusDate;
     if(st==='Baja') return false;
     return true;
   }
@@ -789,7 +958,7 @@
     return dates.map(date=>{
       const attendees=new Set(atts.filter(a=>a.eventDate===date).map(idOf).filter(Boolean));
       const active=new Set(regs.filter(r=>activeAtDate(r,date)).map(idOf).filter(Boolean));
-      return {date,attendees:attendees.size,active:active.size,presentism:rate([...attendees].filter(x=>active.has(x)).length,active.size)};
+      return {date,attendees:attendees.size,active:active.size,presentism:rate(attendees.size,active.size)};
     });
   }
 
@@ -798,8 +967,9 @@
     const regIds=new Set(regs.map(idOf).filter(Boolean)); const attIds=new Set(atts.map(idOf).filter(Boolean));
     $('#kpiRegistered').textContent=regIds.size.toLocaleString('es-AR');
     $('#kpiAttendees').textContent=attIds.size.toLocaleString('es-AR');
-    $('#kpiRate').textContent=rate([...attIds].filter(x=>regIds.has(x)).length,regIds.size).toLocaleString('es-AR')+'%';
-    $('#kpiSchools').textContent=unique(regs.map(cueOf)).length.toLocaleString('es-AR');
+    $('#kpiRate').textContent=rate(attIds.size,regIds.size).toLocaleString('es-AR')+'%';
+    $('#kpiSchools').textContent=unique(regs.map(cueOf).filter(Boolean)).length.toLocaleString('es-AR');
+    $('#kpiParticipatingSchools').textContent=unique(atts.map(cueOf).filter(Boolean)).length.toLocaleString('es-AR');
     $('#kpiCommissions').textContent=unique(regs.map(x=>x.commissionCode)).length.toLocaleString('es-AR');
     $('#kpiAttendanceRows').textContent=atts.length.toLocaleString('es-AR');
     const linkedAttIds=new Set([...attIds].filter(x=>regIds.has(x)));
@@ -824,19 +994,33 @@
     $('#kpiPresentism').textContent=currentMetric ? currentMetric.presentism.toLocaleString('es-AR')+'%' : '—';
     $('#kpiPresentismHint').textContent=currentMetric ? `${formatDate(currentMetric.date)} · ${currentMetric.attendees}/${currentMetric.active} activos` : 'por encuentro: asistentes / activos';
     chart('attendanceChart','line',metrics.map(x=>formatDate(x.date)),[
-      {label:'Asistentes únicos',data:metrics.map(x=>x.attendees),tension:.28,fill:false},
-      {label:'Activos',data:metrics.map(x=>x.active),tension:.28,fill:false},
-      {label:'Presentismo %',data:metrics.map(x=>x.presentism),tension:.28,fill:false,yAxisID:'y1'}
+      {label:'Docentes asistentes únicos',data:metrics.map(x=>x.attendees),tension:.28,fill:false}
     ],{
       scales:{
         x:{grid:{display:false},ticks:{color:'#7a8790',font:{size:9}}},
-        y:{beginAtZero:true,grid:{color:'#edf1f3'},ticks:{color:'#7a8790',font:{size:9}}},
-        y1:{beginAtZero:true,max:100,position:'right',grid:{drawOnChartArea:false},ticks:{callback:v=>v+'%',color:'#7a8790',font:{size:9}}}
+        y:{beginAtZero:true,grid:{color:'#edf1f3'},ticks:{color:'#7a8790',font:{size:9},precision:0}}
       }
     });
 
-    const byArea=groupUnique(regs,r=>r.area||'Sin área').sort((a,b)=>b.value-a.value).slice(0,12);
-    chart('areaChart','doughnut',byArea.map(x=>x.label),[{label:'Inscriptos',data:byArea.map(x=>x.value)}]);
+    chart('presentismPercentChart','line',metrics.map(x=>formatDate(x.date)),[
+      {label:'Presentismo %',data:metrics.map(x=>x.presentism),tension:.28,fill:false}
+    ],{
+      scales:{
+        x:{grid:{display:false},ticks:{color:'#7a8790',font:{size:9}}},
+        y:{beginAtZero:true,suggestedMax:100,grid:{color:'#edf1f3'},ticks:{callback:v=>v+'%',color:'#7a8790',font:{size:9}}}
+      }
+    });
+
+    const areaRegs=groupUnique(regs,r=>r.area||'Sin área').sort((a,b)=>b.value-a.value);
+    const areaAttMap=new Map(groupUnique(atts,r=>r.area||'Sin área').map(x=>[x.label,x.value]));
+    const areaCompare=areaRegs.slice(0,18);
+    chart('areaCompareChart','bar',areaCompare.map(x=>x.label),[
+      {label:'Inscriptos',data:areaCompare.map(x=>x.value)},
+      {label:'Asistentes',data:areaCompare.map(x=>areaAttMap.get(x.label)||0)}
+    ],{indexAxis:'y'});
+
+    const areaClass=groupUnique(regs,r=>r.areaClass||classifyArea(r.area)||'Otros / sin clasificación').sort((a,b)=>b.value-a.value);
+    chart('areaChart','bar',areaClass.map(x=>x.label),[{label:'Docentes',data:areaClass.map(x=>x.value)}],{indexAxis:'y'});
 
     const byDep=groupUnique(regs,r=>r.dependency||'Sin dependencia').sort((a,b)=>b.value-a.value).slice(0,10);
     chart('dependencyChart','bar',byDep.map(x=>x.label),[{label:'Inscriptos',data:byDep.map(x=>x.value)}],{indexAxis:'y'});
@@ -849,8 +1033,8 @@
     ]);
 
     const schoolNames=new Map();
-    [...regs,...atts].forEach(r=>{const k=cueOf(r);if(k&&!schoolNames.has(k))schoolNames.set(k,r.school||r.cue||'Sin escuela')});
-    const schoolAtt=groupUnique(atts,r=>cueOf(r)).sort((a,b)=>b.value-a.value).slice(0,10);
+    [...regs,...atts].filter(r=>cueOf(r)).forEach(r=>{const k=cueOf(r);if(k&&!schoolNames.has(k))schoolNames.set(k,r.school||r.cue||'Sin escuela')});
+    const schoolAtt=groupUnique(atts.filter(r=>cueOf(r)),r=>cueOf(r)).sort((a,b)=>b.value-a.value).slice(0,10);
     chart('schoolChart','bar',schoolAtt.map(x=>schoolNames.get(x.label)||x.label),[{label:'Asistentes únicos',data:schoolAtt.map(x=>x.value)}],{indexAxis:'y'});
 
     const venueAtt=groupUnique(atts,r=>r.venue||'Sin sede').sort((a,b)=>b.value-a.value).slice(0,10);
@@ -859,17 +1043,30 @@
     const tutorAtt=groupUnique(atts,r=>r.tutor||'Sin tutor').sort((a,b)=>b.value-a.value).slice(0,10);
     chart('tutorChart','bar',tutorAtt.map(x=>x.label),[{label:'Asistentes',data:tutorAtt.map(x=>x.value)}],{indexAxis:'y'});
 
+    const cargoRows=regs.filter(r=>String(r.cargoClass||r.cargo||'').trim());
+    const cargoData=groupUnique(cargoRows,r=>r.cargoClass||classifyCargo(r.cargo)||r.cargo||'Sin cargo').sort((a,b)=>b.value-a.value).slice(0,14);
+    const cargoEmpty=$('#cargoEmpty'), cargoCanvas=$('#cargoChart');
+    if(cargoData.length){
+      if(cargoEmpty)cargoEmpty.hidden=true;
+      if(cargoCanvas)cargoCanvas.style.display='';
+      chart('cargoChart','bar',cargoData.map(x=>x.label),[{label:'Docentes',data:cargoData.map(x=>x.value)}],{indexAxis:'y'});
+    }else{
+      if(charts.cargoChart){charts.cargoChart.destroy();delete charts.cargoChart}
+      if(cargoCanvas)cargoCanvas.style.display='none';
+      if(cargoEmpty)cargoEmpty.hidden=false;
+    }
+
     const shiftAtt=groupUnique(atts,r=>r.shift||'Sin turno').sort((a,b)=>b.value-a.value).slice(0,8);
     chart('shiftChart','doughnut',shiftAtt.map(x=>x.label),[{label:'Asistentes',data:shiftAtt.map(x=>x.value)}]);
 
-    const schools=groupUnique(regs,r=>cueOf(r)).sort((a,b)=>b.value-a.value);
-    const attSchool=new Map(groupUnique(atts,r=>cueOf(r)).map(x=>[x.label,x.value]));
+    const schools=groupUnique(regs.filter(r=>cueOf(r)),r=>cueOf(r)).sort((a,b)=>b.value-a.value);
+    const attSchool=new Map(groupUnique(atts.filter(r=>cueOf(r)),r=>cueOf(r)).map(x=>[x.label,x.value]));
     const schoolMeta=new Map();
     regs.forEach(r=>{const k=cueOf(r);if(k&&!schoolMeta.has(k))schoolMeta.set(k,r)});
     $('#schoolTable').innerHTML=schools.slice(0,80).map(s=>{
       const a=attSchool.get(s.label)||0,m=schoolMeta.get(s.label)||{};
-      return `<tr><td>${esc(m.cue||'—')}</td><td>${esc(upper(m.school)||'—')}</td><td>${esc(upper(m.dependency)||'—')}</td><td>${esc(upper(m.sector)||'—')}</td><td>${esc(upper(m.comuna)||'—')}</td><td>${s.value}</td><td>${a}</td><td>${rate(a,s.value).toLocaleString('es-AR')}%</td></tr>`
-    }).join('') || '<tr><td colspan="8" class="empty">Sin datos.</td></tr>';
+      return `<tr><td>${esc(m.cue||'—')}</td><td>${esc(upper(m.school)||'—')}</td><td>${esc(upper(m.dependency)||'—')}</td><td>${s.value}</td><td>${a}</td><td>${rate(a,s.value).toLocaleString('es-AR')}%</td></tr>`
+    }).join('') || '<tr><td colspan="6" class="empty">Sin datos.</td></tr>';
 
     const absentById=new Map();
     regs.filter(r=>!attIds.has(idOf(r))).forEach(r=>{const id=idOf(r);if(id&&!absentById.has(id))absentById.set(id,r)});
@@ -1217,7 +1414,8 @@
       ['Sector de gestión',f.sector],['Comuna',f.comuna],['Estado',f.status],
       ['Fecha de encuentro',f.date?formatDate(f.date):''],['Tutor / capacitador',f.tutor],
       ['Área',f.area],['Sede',f.venue],['Turno',f.shift],
-      ['Excluir apellido',f.excludeSurname],['Excluir fecha',f.excludeDate?formatDate(f.excludeDate):''],
+      ['Excluir apellidos',(f.excludeSurnames||[]).join(' · ')],
+      ['Excluir fechas',(f.excludeDates||[]).map(formatDate).join(' · ')],
       ['Búsqueda',f.q]
     ];
     return pairs.filter(([,v])=>String(v||'').trim()!=='');
@@ -1243,8 +1441,8 @@
 
   function schoolExportRows(){
     const regs=filtered.registrations, atts=filtered.attendance;
-    const schools=groupUnique(regs,r=>cueOf(r)).sort((a,b)=>b.value-a.value);
-    const attSchool=new Map(groupUnique(atts,r=>cueOf(r)).map(x=>[x.label,x.value]));
+    const schools=groupUnique(regs.filter(r=>cueOf(r)),r=>cueOf(r)).sort((a,b)=>b.value-a.value);
+    const attSchool=new Map(groupUnique(atts.filter(r=>cueOf(r)),r=>cueOf(r)).map(x=>[x.label,x.value]));
     const meta=new Map();
     regs.forEach(r=>{const k=cueOf(r);if(k&&!meta.has(k))meta.set(k,r)});
     return schools.map(s=>{
@@ -1253,8 +1451,6 @@
         CUE:m.cue||'',
         ESCUELA:upper(m.school)||'',
         DEPENDENCIA:upper(m.dependency)||'',
-        'SECTOR DE GESTIÓN':upper(m.sector)||'',
-        COMUNA:upper(m.comuna)||'',
         'INSCRIPTOS ÚNICOS':s.value,
         'ASISTENTES ÚNICOS':a,
         'ASISTENCIA %':rate(a,s.value)
@@ -1276,11 +1472,15 @@
       COMISIÓN:r.commissionCode||'',
       ESCUELA:upper(r.school)||'',
       CUE:r.cue||'',
+      CUEANEXO:r.cueAnexo||'',
       DEPENDENCIA:upper(r.dependency)||'',
       'SECTOR DE GESTIÓN':upper(r.sector)||'',
       COMUNA:upper(r.comuna)||'',
       ESTADO:upper(statusNorm(r.status))||'',
       ÁREA:r.area||'',
+      'ÁREA CLASIFICADA':r.areaClass||'',
+      CARGO:r.cargo||'',
+      'CARGO CLASIFICADO':r.cargoClass||'',
       'FECHA INSCRIPCIÓN':formatDate(r.registrationDate)||''
     }));
   }
@@ -1320,10 +1520,14 @@
       FECHA:formatDate(r.eventDate)||'',
       ESCUELA:upper(r.school)||'',
       CUE:r.cue||'',
+      CUEANEXO:r.cueAnexo||'',
       DEPENDENCIA:upper(r.dependency)||'',
       'SECTOR DE GESTIÓN':upper(r.sector)||'',
       COMUNA:upper(r.comuna)||'',
       ÁREA:r.area||'',
+      'ÁREA CLASIFICADA':r.areaClass||'',
+      CARGO:r.cargo||'',
+      'CARGO CLASIFICADO':r.cargoClass||'',
       SEDE:r.venue||'',
       TURNO:r.shift||'',
       TUTOR:r.tutor||''
@@ -1386,9 +1590,10 @@
       ...filters.map(([k,v])=>({INDICADOR:'Filtro · '+k,VALOR:v})),
       {INDICADOR:'Docentes inscriptos únicos',VALOR:regIds.size},
       {INDICADOR:'Docentes asistentes únicos',VALOR:attIds.size},
-      {INDICADOR:'Asistencia %',VALOR:rate([...attIds].filter(x=>regIds.has(x)).length,regIds.size)},
+      {INDICADOR:'Asistencia %',VALOR:rate(attIds.size,regIds.size)},
       {INDICADOR:'Presentismo %',VALOR:currentMetric?.presentism??''},
-      {INDICADOR:'Escuelas representadas',VALOR:unique(regs.map(cueOf)).length},
+      {INDICADOR:'Escuelas representadas',VALOR:unique(regs.map(cueOf).filter(Boolean)).length},
+      {INDICADOR:'Escuelas participantes',VALOR:unique(atts.map(cueOf).filter(Boolean)).length},
       {INDICADOR:'Comisiones',VALOR:unique(regs.map(x=>x.commissionCode)).length},
       {INDICADOR:'Registros de asistencia',VALOR:atts.length}
     ];
@@ -1399,6 +1604,15 @@
       FECHA:formatDate(x.date),ACTIVOS:x.active,'ASISTENTES ÚNICOS':x.attendees,'PRESENTISMO %':x.presentism
     })));
     appendJsonSheet(wb,'Comisiones',commissionExportRows());
+    appendJsonSheet(wb,'Por área',(()=>{
+      const rs=groupUnique(regs,r=>r.area||'Sin área').sort((a,b)=>b.value-a.value);
+      const am=new Map(groupUnique(atts,r=>r.area||'Sin área').map(x=>[x.label,x.value]));
+      return rs.map(x=>({ÁREA:x.label,INSCRIPTOS:x.value,ASISTENTES:am.get(x.label)||0,'ASISTENCIA %':rate(am.get(x.label)||0,x.value)}));
+    })());
+    appendJsonSheet(wb,'Por cargo',(()=>{
+      const cr=groupUnique(regs.filter(r=>r.cargoClass||r.cargo),r=>r.cargoClass||classifyCargo(r.cargo)||r.cargo).sort((a,b)=>b.value-a.value);
+      return cr.map(x=>({CARGO:x.label,DOCENTES:x.value}));
+    })());
     appendJsonSheet(wb,'Escuelas',schoolExportRows());
     appendJsonSheet(wb,'Ausentes',absentExportRows());
     appendJsonSheet(wb,'Detalle',detailExportRows());
@@ -1437,14 +1651,18 @@
     ['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('drag')}));
     ['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove('drag')}));
     dz.addEventListener('drop',e=>handleFiles([...e.dataTransfer.files]));
-    ['filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterDate','filterTutor','filterArea','filterVenue','filterShift','excludeDate'].forEach(id=>$('#'+id).addEventListener('change',applyFilters));
+    ['filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterDate','filterTutor','filterArea','filterVenue','filterShift','excludeDate','excludeSurname'].forEach(id=>$('#'+id).addEventListener('change',applyFilters));
     $('#filterAction').addEventListener('change',()=>{refreshFilterOptions();applyFilters()});
-    ['globalSearch','excludeSurname'].forEach(id=>$('#'+id).addEventListener('input',applyFilters));
+    $('#globalSearch').addEventListener('input',applyFilters);
     $('#detailSearch').addEventListener('input',renderDetail);
     $('#savedFilterSelect').addEventListener('change',()=>{const id=$('#savedFilterSelect').value;$('#deleteFilterBtn').disabled=!id;const f=(dataset.savedFilters||[]).find(x=>x.id===id);if(f)applyFilterSnapshot(f.config)});
     $('#saveFilterBtn').addEventListener('click',saveCurrentFilter);
     $('#deleteFilterBtn').addEventListener('click',deleteSavedFilter);
-    $('#clearFilters').addEventListener('click',()=>{['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterDate','filterTutor','filterArea','filterVenue','filterShift','excludeDate'].forEach(id=>$('#'+id).value='');['globalSearch','excludeSurname'].forEach(id=>$('#'+id).value='');$('#savedFilterSelect').value='';$('#deleteFilterBtn').disabled=true;applyFilters()});
+    $('#clearFilters').addEventListener('click',()=>{
+      ['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterDate','filterTutor','filterArea','filterVenue','filterShift'].forEach(id=>$('#'+id).value='');
+      setMultiValues($('#excludeDate'),[]);setMultiValues($('#excludeSurname'),[]);
+      $('#globalSearch').value='';$('#savedFilterSelect').value='';$('#deleteFilterBtn').disabled=true;applyFilters();
+    });
     $('#printBtn').addEventListener('click',printDashboard);
     $('#excelBtn').addEventListener('click',exportExcel);
     $('#exportBtn').addEventListener('click',exportCsv);
@@ -1463,6 +1681,12 @@
           for(const row of (remote.actions||[])) applyActionSnapshot(row.payload);
           if(Array.isArray(remote.config?.sources)) dataset.sources=remote.config.sources;
           if(Array.isArray(remote.config?.savedFilters)) dataset.savedFilters=remote.config.savedFilters;
+          dataset.masters={
+            schools:Array.isArray(remote.masters?.schools)?remote.masters.schools:[],
+            areas:Array.isArray(remote.masters?.areas)?remote.masters.areas:[],
+            cargos:Array.isArray(remote.masters?.cargos)?remote.masters.cargos:[]
+          };
+          applyMasterDataToDataset();
           await saveState();renderAll();
           toast('Datos recargados desde Supabase');
         }catch(e){

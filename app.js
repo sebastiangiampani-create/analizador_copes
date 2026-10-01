@@ -140,7 +140,12 @@
         signal:controller.signal
       });
       const data=await res.json().catch(()=>({ok:false,error:'invalid_response'}));
-      if(!res.ok || !data.ok) throw new Error(data.error || ('HTTP '+res.status));
+      if(!res.ok || !data.ok){
+        const err=new Error(data.message || data.error || ('HTTP '+res.status));
+        err.code=data.error || '';
+        err.status=res.status;
+        throw err;
+      }
       return data;
     }catch(e){
       if(e?.name==='AbortError')throw new Error('Supabase tardó demasiado en responder.');
@@ -381,7 +386,7 @@
   }
 
   function sourceAuthLabel(mode){
-    return ({private_backend:'Privada · backend',public_link:'Pública por link',technical_account:'Cuenta técnica',delegated:'Autenticado'})[mode] || mode || '—';
+    return ({backend_link:'Link · backend',private_backend:'Link · backend',public_link:'Link · backend'})[mode] || mode || 'Link · backend';
   }
 
   function sourceStatusLabel(status){
@@ -1822,14 +1827,39 @@
     return '';
   }
 
+  function base64ToBytes(value=''){
+    const binary=atob(value);
+    const out=new Uint8Array(binary.length);
+    for(let i=0;i<binary.length;i++)out[i]=binary.charCodeAt(i);
+    return out;
+  }
+
   async function workbookFromGoogleSource(source){
     const spreadsheetId=source.spreadsheetId||spreadsheetIdFromUrl(source.url);
     if(!spreadsheetId) throw new Error('Link de Google Sheets inválido.');
+
+    // Camino principal: Supabase descarga el XLSX del enlace desde backend.
+    // Evita CORS/JSONP y no requiere login de Google dentro de la aplicación.
+    if(remoteReady){
+      try{
+        const remote=await remoteRequest('fetch_sheet_xlsx',{spreadsheetId});
+        if(remote?.data){
+          const bytes=base64ToBytes(remote.data);
+          return XLSX.read(bytes,{type:'array',cellDates:true});
+        }
+      }catch(e){
+        if(e?.code==='google_auth_required' || /requiere iniciar sesión|cualquier persona con el enlace/i.test(e?.message||'')){
+          throw e;
+        }
+        console.warn('Falló lectura backend; pruebo compatibilidad pública',e);
+      }
+    }
+
+    // Respaldo sólo para Sheets realmente públicas.
     const wb=XLSX.utils.book_new();
     let found=0;
     const messages=[];
-
-    for(const sheetName of ['Propuestas','Inscripciones','Asistencias']){
+    for(const sheetName of ['Propuestas','Inscripciones','Asistencias','Bajas','Tutor']){
       try{
         const rows=await loadGvizSheet(spreadsheetId,{sheet:sheetName});
         if(rows.length){
@@ -1853,7 +1883,7 @@
       }
     }
 
-    if(!found) throw new Error(messages.join(' · ') || 'No pude leer Propuestas, Inscripciones ni Asistencias.');
+    if(!found) throw new Error(messages.join(' · ') || 'No pude leer la Google Sheet.');
     return wb;
   }
 
@@ -1875,16 +1905,9 @@
   async function syncSourceNow(sourceId,{silent=false}={}){
     const src=(dataset.sources||[]).find(x=>x.id===sourceId);
     if(!src || src.status==='syncing') return;
-    if(src.authMode!=='public_link'){
-      src.status='pending_backend';
-      src.lastSyncMessage='Google bloquea esta Sheet privada fuera de una sesión autorizada. El enlace quedó registrado; la carga por Excel sigue disponible.';
-      await saveState(); renderSources();
-      if(!silent)toast('Sheet privada: queda pendiente de conexión backend');
-      return;
-    }
-
     src.status='syncing';
-    src.lastSyncMessage='Leyendo Google Sheets...';
+    src.authMode='backend_link';
+    src.lastSyncMessage='Leyendo Google Sheets desde backend...';
     renderSources();
 
     try{
@@ -1917,10 +1940,10 @@
     }catch(e){
       console.error('Error sincronizando Google Sheets',e);
       const msg=e?.message||'No se pudo sincronizar.';
-      if(/sin respuesta de Google|bloqueó la lectura|pantalla de acceso|HTTP 401|HTTP 403|accesible por link/i.test(msg)){
-        src.status='pending_backend';
-        src.authMode='private_backend';
-        src.lastSyncMessage='La Sheet es privada. El enlace quedó guardado y necesita conexión backend para sincronizar.';
+      if(e?.code==='google_auth_required' || /requiere iniciar sesión|cualquier persona con el enlace|HTTP 401|HTTP 403/i.test(msg)){
+        src.status='error';
+        src.authMode='backend_link';
+        src.lastSyncMessage='Google exige inicio de sesión. Compartí la planilla como “Cualquier persona con el enlace” para sincronizarla sin OAuth.';
       }else{
         src.status='error';
         src.lastSyncMessage=msg;
@@ -1934,10 +1957,10 @@
   function startSourceAutoSync(){
     const runDue=()=>{
       const now=Date.now();
-      (dataset.sources||[]).filter(s=>s.active!==false && s.authMode==='public_link').forEach(s=>{
+      (dataset.sources||[]).filter(s=>s.active!==false).forEach(s=>{
         const intervalMs=(Number(s.intervalMinutes)||5)*60000;
         const last=s.lastSyncAt ? new Date(s.lastSyncAt).getTime() : 0;
-        const pending=!s.lastSyncAt || s.status==='pending_backend' || !s.status;
+        const pending=!s.lastSyncAt || s.status==='pending_backend' || s.status==='error' || !s.status;
         if(pending || now-last>=intervalMs) syncSourceNow(s.id,{silent:true});
       });
     };
@@ -1951,7 +1974,7 @@
     const sources=dataset.sources||[];
     $('#sourceCount').textContent=sources.length.toLocaleString('es-AR');
     $('#sourceActiveCount').textContent=sources.filter(x=>x.active!==false).length.toLocaleString('es-AR');
-    $('#sourcePendingCount').textContent=sources.filter(x=>x.status==='pending_backend'||!x.status).length.toLocaleString('es-AR');
+    $('#sourcePendingCount').textContent=sources.filter(x=>x.status==='pending_backend'||x.status==='error'||!x.status).length.toLocaleString('es-AR');
 
     $('#sourceTable').innerHTML=sources.slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')).map(s=>{
       const sid=s.spreadsheetId||spreadsheetIdFromUrl(s.url);
@@ -1997,7 +2020,7 @@
       name:$('#sourceName').value.trim() || `${actionCode} · Google Sheets`,
       url,
       spreadsheetId,
-      authMode:$('#sourceAuthMode').value,
+      authMode:'backend_link',
       intervalMinutes:Number($('#sourceInterval').value)||5,
       active:true,
       status:'pending_backend',
@@ -2018,16 +2041,8 @@
     $('#sourceInterval').value='5';
     renderSources();
     refreshFilterOptions();
-    if(source.authMode==='public_link'){
-      toast('Link registrado. Probando acceso público...');
-      await syncSourceNow(source.id);
-    }else{
-      source.status='pending_backend';
-      source.lastSyncMessage='Google Sheet privada registrada. Pendiente de conexión backend.';
-      await saveState();
-      renderSources();
-      toast('Google Sheet privada registrada');
-    }
+    toast('Link registrado. Probando sincronización por backend...');
+    await syncSourceNow(source.id);
   }
 
   function renderAll(){
@@ -2042,7 +2057,7 @@
   function exportFileStem(){
     const f=currentFilters();
     const action=f.action || 'todas';
-    const date=f.date || new Date().toISOString().slice(0,10);
+    const date=(f.dates?.length===1?f.dates[0]:'') || new Date().toISOString().slice(0,10);
     return ('Analisis_de_acciones_'+action+'_'+date).replace(/[^A-Za-z0-9_-]+/g,'_');
   }
 

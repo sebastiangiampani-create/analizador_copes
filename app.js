@@ -2,7 +2,7 @@
   const DB_NAME = 'analizador_copes_v1';
   const STORE = 'state';
   const KEY = 'dataset';
-  const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], bajas: [], tutors: [], imports: [], sources: [], savedFilters: [], masters:{schools:[],areas:[],cargos:[]} };
+  const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], bajas: [], tutors: [], imports: [], sources: [], savedFilters: [], customFields: [], masters:{schools:[],areas:[],cargos:[]} };
   const REMOTE_ENDPOINT = 'https://qchnawvoensqnynsuhfu.supabase.co/functions/v1/copes-state';
   const REMOTE_KEY_STORAGE = 'analizador_copes_workspace_key_v1';
   let remoteReady = false;
@@ -91,6 +91,7 @@
     if(!Array.isArray(dataset.tutors)) dataset.tutors=[];
     if(!Array.isArray(dataset.sources)) dataset.sources=[];
     if(!Array.isArray(dataset.savedFilters)) dataset.savedFilters=[];
+    if(!Array.isArray(dataset.customFields)) dataset.customFields=[];
     if(!dataset.masters || typeof dataset.masters!=='object') dataset.masters={schools:[],areas:[],cargos:[]};
     if(!Array.isArray(dataset.masters.schools)) dataset.masters.schools=[];
     if(!Array.isArray(dataset.masters.areas)) dataset.masters.areas=[];
@@ -308,7 +309,8 @@
     if(!remoteReady)return;
     await remoteRequest('save_config',{payload:{
       sources:dataset.sources||[],
-      savedFilters:dataset.savedFilters||[]
+      savedFilters:dataset.savedFilters||[],
+      customFields:dataset.customFields||[]
     }});
   }
 
@@ -327,6 +329,7 @@
     const localSnapshots=(dataset.actions||[]).map(a=>buildActionSnapshot(a.code)).filter(Boolean);
     const localSources=structuredClone(dataset.sources||[]);
     const localFilters=structuredClone(dataset.savedFilters||[]);
+    const localFields=structuredClone(dataset.customFields||[]);
 
     const connected=await ensureRemoteAccess({interactive:true});
     if(!connected){
@@ -353,7 +356,8 @@
       if(localSources.length || localFilters.length){
         const mergedSources=Array.isArray(remote.config?.sources)&&remote.config.sources.length ? remote.config.sources : localSources;
         const mergedFilters=Array.isArray(remote.config?.savedFilters)&&remote.config.savedFilters.length ? remote.config.savedFilters : localFilters;
-        await remoteRequest('save_config',{payload:{sources:mergedSources,savedFilters:mergedFilters}});
+        const mergedFields=Array.isArray(remote.config?.customFields)&&remote.config.customFields.length ? remote.config.customFields : localFields;
+        await remoteRequest('save_config',{payload:{sources:mergedSources,savedFilters:mergedFilters,customFields:mergedFields}});
       }
 
       remote=await remoteRequest('load');
@@ -361,12 +365,14 @@
       for(const row of (remote.actions||[])) applyActionSnapshot(row.payload);
       dataset.sources=Array.isArray(remote.config?.sources)?remote.config.sources:[];
       dataset.savedFilters=Array.isArray(remote.config?.savedFilters)?remote.config.savedFilters:[];
+      dataset.customFields=Array.isArray(remote.config?.customFields)?remote.config.customFields:[];
       dataset.masters={
         schools:Array.isArray(remote.masters?.schools)?remote.masters.schools:[],
         areas:Array.isArray(remote.masters?.areas)?remote.masters.areas:[],
         cargos:Array.isArray(remote.masters?.cargos)?remote.masters.cargos:[]
       };
       applyMasterDataToDataset();
+      applyAllEditorLayers();
 
       await saveState();
       const onlineCount=(remote.actions||[]).length;
@@ -847,6 +853,7 @@
     }
     applyTutorsToDataset();
     applyMasterDataToDataset();
+    codes.forEach(applyEditorLayer);
     return codes;
   }
 
@@ -1126,6 +1133,7 @@
     }
     applyTutorsToDataset();
     applyMasterDataToDataset();
+    applyEditorLayer(code);
     const existedImport=dataset.imports.some(x=>x.code===code);
     const previousImport=dataset.imports.find(x=>x.code===code);
     const mergedImport=p.importInfo?.bajasOnly&&previousImport
@@ -2045,8 +2053,413 @@
     await syncSourceNow(source.id);
   }
 
+
+  const EDITOR_TYPES={
+    registrations:{label:'Personas / inscripciones',singular:'persona / inscripción'},
+    attendance:{label:'Asistencias',singular:'asistencia'},
+    bajas:{label:'Bajas',singular:'baja'},
+    tutors:{label:'Tutores / capacitadores',singular:'tutor / capacitador'},
+    proposals:{label:'Comisiones / propuestas',singular:'comisión / propuesta'}
+  };
+  const FIELD_LABELS={
+    actionCode:'Acción',commissionCode:'Comisión / código',code:'Código',commission:'Comisión',
+    dni:'DNI',cuil:'CUIL',firstName:'Nombre',surname:'Apellido',name:'Apellido y nombre',
+    email:'Correo',schoolRaw:'Escuela original',school:'Escuela',cueAnexo:'CUE anexo',cue:'CUE',
+    dependency:'Dependencia',sector:'Sector de gestión',comuna:'Comuna',status:'Estado',
+    statusDate:'Fecha de estado',bajaDate:'Fecha de baja',region:'DE / Región',area:'Área',
+    areaClass:'Área clasificada',cargo:'Cargo',cargoClass:'Cargo clasificado',formation:'Formación',
+    venue:'Sede',shift:'Turno',tutor:'Tutor / capacitador',registrationDate:'Fecha de inscripción',
+    encounter:'Encuentro',eventDate:'Fecha de encuentro',capturedAt:'Fecha del registro',
+    reason:'Motivo / observación',date:'Fecha',source:'Fuente',capacity:'Cupo',
+    registeredReported:'Inscriptos informados',tutors:'Tutores / capacitadores',meetings:'Encuentros'
+  };
+  const PREFERRED_FIELDS={
+    registrations:['dni','surname','firstName','name','email','commissionCode','school','cue','cueAnexo','dependency','sector','comuna','status','statusDate','bajaDate','region','area','areaClass','cargo','cargoClass','formation','venue','shift','tutor','registrationDate','source'],
+    attendance:['dni','surname','firstName','name','email','commissionCode','encounter','eventDate','capturedAt','school','cue','cueAnexo','dependency','sector','comuna','status','region','area','areaClass','cargo','cargoClass','formation','venue','shift','tutor','source'],
+    bajas:['dni','surname','firstName','name','email','commissionCode','bajaDate','school','cue','cueAnexo','dependency','sector','comuna','status','reason','source'],
+    tutors:['dni','name','date','source'],
+    proposals:['code','commission','area','areaClass','formation','venue','shift','capacity','registeredReported','tutors','meetings']
+  };
+  let editorState={recordRef:null,isNew:false,reportRows:[],reportColumns:[]};
+
+  function editorActionCode(){
+    return String($('#editorAction')?.value||'').trim().toUpperCase();
+  }
+  function editorType(){
+    return $('#editorDataset')?.value||'registrations';
+  }
+  function actionEditorConfig(code){
+    const action=dataset.actions.find(a=>a.code===code);
+    if(!action)return null;
+    if(!action.editor || typeof action.editor!=='object')action.editor={};
+    const e=action.editor;
+    if(!Array.isArray(e.customFields))e.customFields=[];
+    if(!e.overrides || typeof e.overrides!=='object')e.overrides={};
+    if(!e.additions || typeof e.additions!=='object')e.additions={};
+    if(!e.deletions || typeof e.deletions!=='object')e.deletions={};
+    for(const type of Object.keys(EDITOR_TYPES)){
+      if(!e.overrides[type] || typeof e.overrides[type]!=='object')e.overrides[type]={};
+      if(!Array.isArray(e.additions[type]))e.additions[type]=[];
+      if(!Array.isArray(e.deletions[type]))e.deletions[type]=[];
+    }
+    return e;
+  }
+  function editorId(){
+    return globalThis.crypto?.randomUUID?.() || ('edit-'+Date.now()+'-'+Math.random().toString(36).slice(2));
+  }
+  function recordIdentity(type,row){
+    if(row?._recordKey)return row._recordKey;
+    if(row?._manualId)return 'manual:'+row._manualId;
+    if(type==='registrations')return [row.actionCode,row.commissionCode,idOf(row)].join('|');
+    if(type==='attendance')return [row.actionCode,row.commissionCode,idOf(row),row.encounter,row.eventDate,row.capturedAt].join('|');
+    if(type==='bajas')return [row.actionCode,idOf(row),row.bajaDate,row.reason].join('|');
+    if(type==='tutors')return [row.actionCode,idOf(row),row.date].join('|');
+    if(type==='proposals')return [row.actionCode,row.code||row.commission].join('|');
+    return [row?.actionCode,JSON.stringify(row||{})].join('|');
+  }
+  function stripEditorMeta(row){
+    const out={};
+    for(const [k,v] of Object.entries(row||{})){
+      if(k.startsWith('_'))continue;
+      out[k]=v;
+    }
+    return out;
+  }
+  function applyEditorLayer(code){
+    const cfg=actionEditorConfig(code);
+    if(!cfg)return;
+    for(const type of Object.keys(EDITOR_TYPES)){
+      const all=Array.isArray(dataset[type])?dataset[type]:[];
+      const others=all.filter(r=>r.actionCode!==code);
+      let base=all.filter(r=>r.actionCode===code && !r._manualAdded);
+      const deleted=new Set(cfg.deletions[type]||[]);
+      base=base.filter(r=>!deleted.has(recordIdentity(type,r)));
+      base=base.map(r=>{
+        const key=recordIdentity(type,r);
+        const patch=cfg.overrides[type]?.[key];
+        return patch?{...r,...structuredClone(patch),actionCode:code,_recordKey:key}:r;
+      });
+      const additions=(cfg.additions[type]||[]).map(r=>({...structuredClone(r),actionCode:code,_manualAdded:true}));
+      dataset[type]=others.concat(base,additions);
+    }
+  }
+  function applyAllEditorLayers(){
+    for(const a of dataset.actions||[])applyEditorLayer(a.code);
+  }
+  function customFieldDefs(code,type){
+    const global=(dataset.customFields||[]).filter(f=>f.dataset===type && f.active!==false);
+    const local=(actionEditorConfig(code)?.customFields||[]).filter(f=>f.dataset===type && f.active!==false);
+    const map=new Map();
+    [...global,...local].forEach(f=>map.set(f.key,f));
+    return [...map.values()];
+  }
+  function recordFieldsFor(code,type){
+    const rows=(dataset[type]||[]).filter(r=>r.actionCode===code).slice(0,500);
+    const keys=new Set(PREFERRED_FIELDS[type]||[]);
+    rows.forEach(r=>Object.keys(r||{}).forEach(k=>{
+      if(k==='actionCode'||k.startsWith('_'))return;
+      if(k.startsWith('custom_'))return;
+      keys.add(k);
+    }));
+    const defs=customFieldDefs(code,type);
+    defs.forEach(f=>keys.add(f.key));
+    const preferred=PREFERRED_FIELDS[type]||[];
+    return [...keys].filter(Boolean).sort((a,b)=>{
+      const ai=preferred.indexOf(a),bi=preferred.indexOf(b);
+      if(ai>=0||bi>=0)return (ai<0?999:ai)-(bi<0?999:bi);
+      return (FIELD_LABELS[a]||a).localeCompare(FIELD_LABELS[b]||b,'es');
+    }).map(key=>{
+      const custom=defs.find(f=>f.key===key);
+      return custom || {key,label:FIELD_LABELS[key]||key,type:inferFieldType(key,rows)};
+    });
+  }
+  function inferFieldType(key,rows=[]){
+    if(/date|fecha/i.test(key))return 'date';
+    const sample=rows.map(r=>r?.[key]).find(v=>v!==''&&v!==null&&v!==undefined);
+    if(typeof sample==='number')return 'number';
+    if(typeof sample==='boolean')return 'boolean';
+    if(Array.isArray(sample)||sample&&typeof sample==='object')return 'json';
+    return 'text';
+  }
+  function displayEditorValue(v){
+    if(v===null||v===undefined||v==='')return '—';
+    if(Array.isArray(v))return v.map(x=>typeof x==='object'?JSON.stringify(x):x).join(' · ');
+    if(typeof v==='object')return JSON.stringify(v);
+    return String(v);
+  }
+  function editorSearchMatch(row,q){
+    if(!q)return true;
+    return normalize(Object.entries(row||{}).filter(([k])=>!k.startsWith('_')).map(([,v])=>displayEditorValue(v)).join(' ')).includes(q);
+  }
+  function renderEditor(){
+    const actionSel=$('#editorAction');
+    if(!actionSel)return;
+    const previous=actionSel.value;
+    actionSel.innerHTML=(dataset.actions||[]).slice().sort((a,b)=>a.code.localeCompare(b.code)).map(a=>'<option value="'+esc(a.code)+'">'+esc(a.code+' · '+(a.title||''))+'</option>').join('');
+    if(dataset.actions.some(a=>a.code===previous))actionSel.value=previous;
+    else if($('#filterAction')?.value && dataset.actions.some(a=>a.code===$('#filterAction').value))actionSel.value=$('#filterAction').value;
+    const code=editorActionCode();
+    const type=editorType();
+    if(!code){
+      $('#editorCount').textContent='0 registros';
+      $('#editorTableHead').innerHTML='';
+      $('#editorTableBody').innerHTML='<tr><td class="empty">No hay acciones cargadas.</td></tr>';
+      renderEditorFields();
+      renderReportBuilder();
+      return;
+    }
+    actionEditorConfig(code);
+    const q=normalize($('#editorSearch')?.value||'');
+    const rows=(dataset[type]||[]).filter(r=>r.actionCode===code && editorSearchMatch(r,q));
+    const fields=recordFieldsFor(code,type);
+    const visible=fields.slice(0,7);
+    $('#editorCount').textContent=rows.length.toLocaleString('es-AR')+' registro(s) · '+EDITOR_TYPES[type].label;
+    $('#editorTableHead').innerHTML='<tr>'+visible.map(f=>'<th>'+esc(f.label||FIELD_LABELS[f.key]||f.key)+'</th>').join('')+'<th></th></tr>';
+    $('#editorTableBody').innerHTML=rows.slice(0,1000).map((r,i)=>{
+      const key=recordIdentity(type,r);
+      return '<tr data-editor-row="'+esc(key)+'">'+visible.map(f=>'<td>'+esc(displayEditorValue(r[f.key]))+'</td>').join('')+
+        '<td><button type="button" class="source-action-btn" data-edit-record="'+esc(key)+'">Editar</button></td></tr>';
+    }).join('') || '<tr><td colspan="'+(visible.length+1)+'" class="empty">No hay registros para esta selección.</td></tr>';
+    renderEditorFields();
+    renderReportBuilder();
+  }
+  function renderEditorFields(){
+    const host=$('#editorFieldsList'); if(!host)return;
+    const code=editorActionCode(),type=editorType();
+    if(!code){host.innerHTML='<div class="empty">Elegí una acción.</div>';return}
+    const global=(dataset.customFields||[]).filter(f=>f.dataset===type);
+    const local=(actionEditorConfig(code)?.customFields||[]).filter(f=>f.dataset===type);
+    const defs=[...global.map(f=>({...f,_scope:'global'})),...local.map(f=>({...f,_scope:'action'}))];
+    host.innerHTML=defs.map(f=>'<div class="editor-field-item">'+
+      '<div><strong>'+esc(f.label)+'</strong><span>'+esc(f.key)+' · '+esc(f.type)+(f._scope==='global'?' · todas las acciones':' · '+code)+'</span></div>'+
+      '<div><button type="button" class="source-action-btn" data-edit-field="'+esc(f.id)+'" data-field-scope="'+f._scope+'">Editar</button> '+
+      '<button type="button" class="source-action-btn" data-toggle-field="'+esc(f.id)+'" data-field-scope="'+f._scope+'">'+(f.active===false?'Activar':'Desactivar')+'</button></div>'+
+      '</div>').join('') || '<div class="empty">Todavía no agregaste campos personalizados.</div>';
+  }
+  function fieldDefinitionById(id,scope,code){
+    if(scope==='global')return (dataset.customFields||[]).find(f=>f.id===id);
+    return (actionEditorConfig(code)?.customFields||[]).find(f=>f.id===id);
+  }
+  function openFieldModal(existing=null,scope='action'){
+    const code=editorActionCode(); if(!code){toast('Elegí una acción.');return}
+    $('#editorFieldId').value=existing?.id||'';
+    $('#editorFieldTitle').textContent=existing?'Editar campo':'Agregar campo';
+    $('#editorFieldLabel').value=existing?.label||'';
+    $('#editorFieldKey').value=existing?.key||'';
+    $('#editorFieldDataset').value=existing?.dataset||editorType();
+    $('#editorFieldScope').value=scope;
+    $('#editorFieldType').value=existing?.type||'text';
+    $('#editorFieldOptions').value=(existing?.options||[]).join('\n');
+    $('#editorFieldOptionsWrap').hidden=$('#editorFieldType').value!=='select';
+    $('#editorFieldModal').hidden=false;
+    setTimeout(()=>$('#editorFieldLabel')?.focus(),30);
+  }
+  function closeFieldModal(){ if($('#editorFieldModal'))$('#editorFieldModal').hidden=true; }
+  function fieldKeyFromLabel(v=''){
+    const base=normalize(v).replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'').slice(0,40)||'campo';
+    return 'custom_'+base;
+  }
+  async function saveEditorField(e){
+    e.preventDefault();
+    const code=editorActionCode(); if(!code)return;
+    const id=$('#editorFieldId').value||editorId();
+    const label=$('#editorFieldLabel').value.trim();
+    let key=$('#editorFieldKey').value.trim();
+    if(!key)key=fieldKeyFromLabel(label);
+    key=key.startsWith('custom_')?key:fieldKeyFromLabel(key);
+    const datasetType=$('#editorFieldDataset').value;
+    const scope=$('#editorFieldScope').value;
+    const type=$('#editorFieldType').value;
+    const options=type==='select'?unique($('#editorFieldOptions').value.split(/\n|;/).map(x=>x.trim()).filter(Boolean)):[];
+    const item={id,key,label,type,options,dataset:datasetType,active:true,updatedAt:new Date().toISOString()};
+    if(scope==='global'){
+      dataset.customFields=[...(dataset.customFields||[]).filter(f=>f.id!==id),item];
+      await saveState();
+      await saveRemoteConfig();
+    }else{
+      const cfg=actionEditorConfig(code);
+      cfg.customFields=[...(cfg.customFields||[]).filter(f=>f.id!==id),item];
+      await persistEditorAction(code);
+    }
+    closeFieldModal(); renderEditor(); toast('Campo guardado.');
+  }
+  async function toggleEditorField(id,scope){
+    const code=editorActionCode();
+    const field=fieldDefinitionById(id,scope,code); if(!field)return;
+    field.active=field.active===false?true:false;
+    field.updatedAt=new Date().toISOString();
+    if(scope==='global'){await saveState();await saveRemoteConfig();}
+    else await persistEditorAction(code);
+    renderEditor();
+    toast(field.active===false?'Campo desactivado; los datos se conservan.':'Campo activado.');
+  }
+  function fieldInputHtml(field,value){
+    const id='editfld_'+field.key;
+    const val=value??'';
+    if(field.type==='boolean')return '<label class="editor-field-input"><span>'+esc(field.label)+'</span><select name="'+esc(field.key)+'" id="'+esc(id)+'"><option value=""></option><option value="true" '+(val===true||String(val)==='true'?'selected':'')+'>Sí</option><option value="false" '+(val===false||String(val)==='false'?'selected':'')+'>No</option></select></label>';
+    if(field.type==='select')return '<label class="editor-field-input"><span>'+esc(field.label)+'</span><select name="'+esc(field.key)+'" id="'+esc(id)+'"><option value=""></option>'+(field.options||[]).map(o=>'<option value="'+esc(o)+'" '+(String(val)===String(o)?'selected':'')+'>'+esc(o)+'</option>').join('')+'</select></label>';
+    if(field.type==='textarea'||field.type==='json'||Array.isArray(val)||(val&&typeof val==='object')){
+      const text=Array.isArray(val)?val.map(x=>typeof x==='object'?JSON.stringify(x):x).join('\n'):(val&&typeof val==='object'?JSON.stringify(val,null,2):String(val||''));
+      return '<label class="editor-field-input full"><span>'+esc(field.label)+'</span><textarea name="'+esc(field.key)+'" data-editor-kind="'+(field.type==='json'||val&&typeof val==='object'?'json':Array.isArray(val)?'array':'text')+'" rows="4">'+esc(text)+'</textarea></label>';
+    }
+    const inputType=field.type==='number'?'number':field.type==='date'?'date':'text';
+    return '<label class="editor-field-input"><span>'+esc(field.label)+'</span><input name="'+esc(field.key)+'" type="'+inputType+'" value="'+esc(val)+'" /></label>';
+  }
+  function openRecordModal(row=null){
+    const code=editorActionCode(),type=editorType(); if(!code)return;
+    editorState.recordRef=row;
+    editorState.isNew=!row;
+    const record=row||{actionCode:code};
+    const fields=recordFieldsFor(code,type);
+    $('#editorRecordTitle').textContent=(row?'Editar ':'Agregar ')+EDITOR_TYPES[type].singular+' · '+code;
+    $('#editorRecordFields').innerHTML=fields.map(f=>fieldInputHtml(f,record[f.key])).join('');
+    $('#editorDeleteRecord').hidden=!row;
+    $('#editorRecordModal').hidden=false;
+  }
+  function closeRecordModal(){if($('#editorRecordModal'))$('#editorRecordModal').hidden=true;editorState.recordRef=null;editorState.isNew=false;}
+  function parseEditorFieldValue(field,control,existing){
+    if(!control)return existing??'';
+    let value=control.value;
+    if(field.type==='number')return value===''?'':num(value);
+    if(field.type==='boolean')return value===''?'':value==='true';
+    const kind=control.dataset?.editorKind;
+    if(kind==='array')return unique(value.split(/\n|;/).map(x=>x.trim()).filter(Boolean));
+    if(kind==='json'){
+      if(!value.trim())return Array.isArray(existing)?[]:{};
+      try{return JSON.parse(value)}catch(e){throw new Error('JSON inválido en '+field.label)}
+    }
+    return value;
+  }
+  async function persistEditorAction(code){
+    await saveState();
+    if(!remoteReady){
+      const ok=await ensureRemoteAccess({interactive:true});
+      if(!ok)throw new Error('Supabase no está conectado.');
+    }
+    await saveRemoteAction(code);
+    setStorageUi('connected',dataset.actions.length+' acción(es) guardada(s) online y verificadas.');
+  }
+  async function saveEditorRecord(e){
+    e.preventDefault();
+    const code=editorActionCode(),type=editorType(); if(!code)return;
+    const fields=recordFieldsFor(code,type);
+    const current=editorState.recordRef;
+    const base=current?{...current}:{actionCode:code};
+    try{
+      for(const field of fields){
+        const control=$('#editorRecordForm [name="'+CSS.escape(field.key)+'"]');
+        base[field.key]=parseEditorFieldValue(field,control,current?.[field.key]);
+      }
+      base.actionCode=code;
+      if(type==='registrations' && !base.status)base.status='Activo';
+      if(type==='bajas')base.status='Baja';
+      if(base.area!==undefined)base.areaClass=classifyArea(base.area)||base.areaClass||'';
+      if(base.cargo!==undefined)base.cargoClass=classifyCargo(base.cargo)||base.cargoClass||'';
+      const cfg=actionEditorConfig(code);
+      if(editorState.isNew){
+        base._manualId=editorId();
+        base._manualAdded=true;
+        cfg.additions[type].push(stripEditorMeta({...base,_manualId:base._manualId}));
+        dataset[type].push(base);
+      }else{
+        const key=recordIdentity(type,current);
+        base._recordKey=key;
+        if(current._manualAdded || current._manualId){
+          const mid=current._manualId;
+          const idx=cfg.additions[type].findIndex(x=>x._manualId===mid);
+          const stored={...stripEditorMeta(base),_manualId:mid};
+          if(idx>=0)cfg.additions[type][idx]=stored; else cfg.additions[type].push(stored);
+        }else{
+          cfg.overrides[type][key]=stripEditorMeta(base);
+        }
+        const idx=dataset[type].indexOf(current);
+        if(idx>=0)dataset[type][idx]=base;
+      }
+      await persistEditorAction(code);
+      closeRecordModal();
+      applyFilters();renderEditor();
+      toast('Registro guardado online.');
+    }catch(err){
+      console.error(err);toast(err?.message||'No se pudo guardar el registro.');
+    }
+  }
+  async function deleteEditorRecord(){
+    const code=editorActionCode(),type=editorType(),row=editorState.recordRef;
+    if(!code||!row)return;
+    if(!confirm('¿Eliminar este registro de '+EDITOR_TYPES[type].label+'?'))return;
+    const cfg=actionEditorConfig(code);
+    if(row._manualAdded||row._manualId){
+      cfg.additions[type]=cfg.additions[type].filter(x=>x._manualId!==row._manualId);
+    }else{
+      const key=recordIdentity(type,row);
+      cfg.deletions[type]=unique([...(cfg.deletions[type]||[]),key]);
+      delete cfg.overrides[type][key];
+    }
+    dataset[type]=dataset[type].filter(x=>x!==row);
+    try{
+      await persistEditorAction(code);
+      closeRecordModal();applyFilters();renderEditor();toast('Registro eliminado y guardado online.');
+    }catch(e){console.error(e);toast('No se pudo verificar la eliminación en Supabase.');}
+  }
+  function rowByEditorKey(type,code,key){
+    return (dataset[type]||[]).find(r=>r.actionCode===code && recordIdentity(type,r)===key);
+  }
+  function reportRowsFor(type,code,q=''){
+    const nq=normalize(q);
+    return (dataset[type]||[]).filter(r=>r.actionCode===code && (!nq||editorSearchMatch(r,nq)));
+  }
+  function renderReportBuilder(){
+    const code=editorActionCode();if(!$('#reportColumns'))return;
+    const type=$('#reportDataset')?.value||editorType();
+    if(!code){$('#reportColumns').innerHTML='';return}
+    const fields=recordFieldsFor(code,type);
+    const selected=new Set(editorState.reportColumns||[]);
+    if(!selected.size)fields.slice(0,8).forEach(f=>selected.add(f.key));
+    $('#reportColumns').innerHTML=fields.map(f=>'<label class="report-column"><input type="checkbox" value="'+esc(f.key)+'" '+(selected.has(f.key)?'checked':'')+' /> '+esc(f.label)+'</label>').join('');
+    const group=$('#reportGroupBy'),old=group.value;
+    group.innerHTML='<option value="">Sin agrupación</option>'+fields.map(f=>'<option value="'+esc(f.key)+'">'+esc(f.label)+'</option>').join('');
+    if(fields.some(f=>f.key===old))group.value=old;
+  }
+  function buildCustomReport(){
+    const code=editorActionCode(); if(!code)return {rows:[],fields:[]};
+    const type=$('#reportDataset').value;
+    const fields=recordFieldsFor(code,type);
+    const selected=[...$('#reportColumns').querySelectorAll('input:checked')].map(x=>x.value);
+    editorState.reportColumns=selected;
+    const fieldMap=new Map(fields.map(f=>[f.key,f]));
+    const rows=reportRowsFor(type,code,$('#reportSearch').value);
+    const groupBy=$('#reportGroupBy').value;
+    if(groupBy){
+      const groups=new Map();
+      for(const r of rows){
+        const label=displayEditorValue(r[groupBy]);
+        if(!groups.has(label))groups.set(label,{records:0,people:new Set()});
+        const g=groups.get(label);g.records++;
+        const person=idOf(r);if(person)g.people.add(person);
+      }
+      const gf=fieldMap.get(groupBy)||{label:FIELD_LABELS[groupBy]||groupBy};
+      return {rows:[...groups.entries()].map(([label,g])=>({[gf.label]:label,REGISTROS:g.records,PERSONAS:g.people.size||g.records})),fields:[]};
+    }
+    const chosen=selected.length?selected:fields.slice(0,8).map(f=>f.key);
+    return {rows:rows.map(r=>Object.fromEntries(chosen.map(k=>[fieldMap.get(k)?.label||FIELD_LABELS[k]||k,displayEditorValue(r[k])==='—'?'':r[k]]))),fields:chosen};
+  }
+  function previewCustomReport(){
+    const report=buildCustomReport();editorState.reportRows=report.rows;
+    const cols=report.rows.length?Object.keys(report.rows[0]):[];
+    $('#reportPreviewHead').innerHTML=cols.length?'<tr>'+cols.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr>':'';
+    $('#reportPreviewBody').innerHTML=report.rows.slice(0,300).map(r=>'<tr>'+cols.map(c=>'<td>'+esc(displayEditorValue(r[c]))+'</td>').join('')+'</tr>').join('') || '<tr><td class="empty">Sin resultados.</td></tr>';
+  }
+  function exportCustomReport(){
+    const report=buildCustomReport();
+    if(!report.rows.length){toast('No hay datos para exportar.');return}
+    const wb=XLSX.utils.book_new();
+    appendJsonSheet(wb,'Informe',report.rows);
+    XLSX.writeFile(wb,'Informe_'+editorActionCode()+'_'+editorType()+'.xlsx',{compression:true});
+    toast('Informe personalizado exportado.');
+  }
+
   function renderAll(){
-    refreshFilterOptions(); renderImportResults(); renderSources(); applyFilters();
+    refreshFilterOptions(); renderImportResults(); renderSources(); applyFilters(); renderEditor();
   }
 
   function switchView(name){
@@ -2403,6 +2816,37 @@
       const btn=e.target.closest('[data-toggle-action-status]');
       if(btn)toggleActionStatus(btn.dataset.toggleActionStatus);
     });
+    $('#editorAction')?.addEventListener('change',()=>{renderEditor();previewCustomReport()});
+    $('#editorDataset')?.addEventListener('change',()=>{editorState.reportColumns=[];renderEditor()});
+    $('#editorSearch')?.addEventListener('input',()=>{clearTimeout(renderEditor.t);renderEditor.t=setTimeout(renderEditor,160)});
+    $('#editorAddRecord')?.addEventListener('click',()=>openRecordModal());
+    $('#editorAddField')?.addEventListener('click',()=>openFieldModal());
+    $('#editorTableBody')?.addEventListener('click',e=>{
+      const btn=e.target.closest('[data-edit-record]');if(!btn)return;
+      const row=rowByEditorKey(editorType(),editorActionCode(),btn.dataset.editRecord);
+      if(row)openRecordModal(row);
+    });
+    $('#editorFieldsList')?.addEventListener('click',e=>{
+      const edit=e.target.closest('[data-edit-field]');
+      if(edit){const f=fieldDefinitionById(edit.dataset.editField,edit.dataset.fieldScope,editorActionCode());if(f)openFieldModal(f,edit.dataset.fieldScope);return}
+      const toggle=e.target.closest('[data-toggle-field]');
+      if(toggle)toggleEditorField(toggle.dataset.toggleField,toggle.dataset.fieldScope);
+    });
+    $('#editorRecordForm')?.addEventListener('submit',saveEditorRecord);
+    $('#editorDeleteRecord')?.addEventListener('click',deleteEditorRecord);
+    $('#editorRecordClose')?.addEventListener('click',closeRecordModal);
+    $('#editorRecordCancel')?.addEventListener('click',closeRecordModal);
+    $('#editorFieldForm')?.addEventListener('submit',saveEditorField);
+    $('#editorFieldClose')?.addEventListener('click',closeFieldModal);
+    $('#editorFieldCancel')?.addEventListener('click',closeFieldModal);
+    $('#editorFieldType')?.addEventListener('change',()=>{$('#editorFieldOptionsWrap').hidden=$('#editorFieldType').value!=='select'});
+    $('#editorFieldLabel')?.addEventListener('input',()=>{if(!$('#editorFieldId').value&&!$('#editorFieldKey').value)$('#editorFieldKey').value=fieldKeyFromLabel($('#editorFieldLabel').value)});
+    $('#reportDataset')?.addEventListener('change',()=>{editorState.reportColumns=[];renderReportBuilder();previewCustomReport()});
+    $('#reportGroupBy')?.addEventListener('change',previewCustomReport);
+    $('#reportSearch')?.addEventListener('input',()=>{clearTimeout(previewCustomReport.t);previewCustomReport.t=setTimeout(previewCustomReport,180)});
+    $('#reportColumns')?.addEventListener('change',previewCustomReport);
+    $('#reportPreviewBtn')?.addEventListener('click',previewCustomReport);
+    $('#reportExportBtn')?.addEventListener('click',exportCustomReport);
     $('#sourceForm')?.addEventListener('submit',saveSourceFromForm);
     $('#sourceAction')?.addEventListener('input',e=>{e.target.value=e.target.value.toUpperCase().replace(/[^C0-9 _-]/g,'').slice(0,8)});
     $('#sourceAction')?.addEventListener('change',e=>{const c=actionCodeValue(e.target.value);if(c)e.target.value=c});

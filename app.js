@@ -17,8 +17,25 @@
   const $$ = (s) => [...document.querySelectorAll(s)];
   const esc = (v='') => String(v ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
   const normalize = (v='') => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
-  const codeIn = (v='') => (String(v ?? '').match(/C\d{4}(?:[-_]\d+)?/i)?.[0] || '').toUpperCase().replace('_','-');
-  const mainCodeIn = (v='') => (String(v ?? '').match(/C\d{4}/i)?.[0] || '').toUpperCase();
+  const parseActionCode = (v='',allowBare=false) => {
+    const raw=String(v ?? '').trim().toUpperCase();
+    if(!raw)return '';
+    const m=raw.match(/C[\s_-]?(\d{4})(?!\d)/i);
+    if(m)return 'C'+m[1];
+    if(allowBare){
+      const b=raw.match(/^0*(\d{1,4})$/);
+      if(b)return 'C'+b[1].padStart(4,'0');
+    }
+    return '';
+  };
+  const mainCodeIn = (v='') => parseActionCode(v,false);
+  const actionCodeValue = (v='') => parseActionCode(v,true);
+  const codeIn = (v='') => {
+    const raw=String(v ?? '').trim().toUpperCase();
+    const m=raw.match(/C[\s_-]?(\d{4})(?:[-_](\d+))?/i);
+    if(!m)return '';
+    return 'C'+m[1]+(m[2]?'-'+m[2]:'');
+  };
   const num = (v) => Number(String(v ?? '').replace(',','.')) || 0;
   const unique = (arr) => [...new Set(arr.filter(v => v !== null && v !== undefined && String(v).trim() !== '').map(v => String(v).trim()))];
   const sortAlpha = (arr) => arr.sort((a,b) => a.localeCompare(b,'es',{numeric:true,sensitivity:'base'}));
@@ -112,15 +129,25 @@
   async function remoteRequest(op,payload={},keyOverride=''){
     const key=keyOverride || workspaceKey();
     if(!key) throw new Error('missing_workspace_key');
-    const res=await fetch(REMOTE_ENDPOINT,{
-      method:'POST',
-      headers:{'Content-Type':'application/json','x-copes-key':key},
-      body:JSON.stringify({op,...payload}),
-      cache:'no-store'
-    });
-    const data=await res.json().catch(()=>({ok:false,error:'invalid_response'}));
-    if(!res.ok || !data.ok) throw new Error(data.error || ('HTTP '+res.status));
-    return data;
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),60000);
+    try{
+      const res=await fetch(REMOTE_ENDPOINT,{
+        method:'POST',
+        headers:{'Content-Type':'application/json','x-copes-key':key},
+        body:JSON.stringify({op,...payload}),
+        cache:'no-store',
+        signal:controller.signal
+      });
+      const data=await res.json().catch(()=>({ok:false,error:'invalid_response'}));
+      if(!res.ok || !data.ok) throw new Error(data.error || ('HTTP '+res.status));
+      return data;
+    }catch(e){
+      if(e?.name==='AbortError')throw new Error('Supabase tardó demasiado en responder.');
+      throw e;
+    }finally{
+      clearTimeout(timer);
+    }
   }
 
   function openStorageModal(){
@@ -246,7 +273,7 @@
     return row;
   }
 
-  async function saveRemotePayload(payload,{retries=2}={}){
+  async function saveRemotePayload(payload,{retries=1}={}){
     if(!remoteReady)throw new Error('remote_not_ready');
     const code=payload?.action?.code;
     if(!/^C\d{4}$/.test(code||''))throw new Error('invalid_action_code');
@@ -509,86 +536,129 @@
       +(fa.district!==null&&fb.district===fa.district?.15:0);
   }
 
+  let schoolIndexMemoSource=null;
+  let schoolIndexMemo=null;
+  let areaLookupMemoSource=null;
+  let areaLookupMemo=null;
+  let cargoLookupMemoSource=null;
+  let cargoLookupMemo=null;
+
+  function schoolSimilarityProfile(profile,prepared){
+    const A=profile.tokens, B=prepared.tokens;
+    let inter=0; for(const t of A)if(B.has(t))inter++;
+    const union=new Set([...A,...B]).size;
+    const coverage=inter/Math.max(1,Math.min(A.size,B.size));
+    const jaccard=inter/Math.max(1,union);
+    const fa=profile.nd, fb=prepared.nd;
+    if(fa.number!==null && fb.number!==null && fa.number!==fb.number)return -1;
+    if(fa.district!==null && fb.district!==null && fa.district!==fb.district)return -1;
+    const ta=profile.type,tb=prepared.type;
+    return .6*coverage+.3*jaccard
+      +(ta&&tb&&ta===tb?.15:0)
+      +(fa.number!==null&&fb.number===fa.number?.12:0)
+      +(fa.district!==null&&fb.district===fa.district?.15:0);
+  }
+
   function schoolMasterIndexes(){
     const schools=dataset.masters?.schools||[];
+    if(schoolIndexMemo && schoolIndexMemoSource===schools)return schoolIndexMemo;
     const byAnexo=new Map(), byCue=new Map(), byName=new Map(), byCanonical=new Map(), byTypeNumber=new Map(), byTypeNumberDistrict=new Map();
     const prepared=[];
-    for(const s of schools){
-      const ca=cleanCueAnexo(s.cueanexo), cue=cleanCue(s.cue), name=normalize(s.nombre_norm||s.nombre||'');
-      const canonical=schoolCanonical(s.nombre||'');
-      const type=schoolType(s.nombre||'');
-      const nd=schoolNumberDistrict(s.nombre||'');
-      if(ca)byAnexo.set(ca,s);
-      if(cue){if(!byCue.has(cue))byCue.set(cue,[]);byCue.get(cue).push(s)}
-      if(name){if(!byName.has(name))byName.set(name,[]);byName.get(name).push(s)}
-      if(canonical){if(!byCanonical.has(canonical))byCanonical.set(canonical,[]);byCanonical.get(canonical).push(s)}
+    for(const school of schools){
+      const ca=cleanCueAnexo(school.cueanexo), cue=cleanCue(school.cue), name=normalize(school.nombre_norm||school.nombre||'');
+      const canonical=schoolCanonical(school.nombre||'');
+      const type=schoolType(school.nombre||'');
+      const nd=schoolNumberDistrict(school.nombre||'');
+      if(ca)byAnexo.set(ca,school);
+      if(cue){if(!byCue.has(cue))byCue.set(cue,[]);byCue.get(cue).push(school)}
+      if(name){if(!byName.has(name))byName.set(name,[]);byName.get(name).push(school)}
+      if(canonical){if(!byCanonical.has(canonical))byCanonical.set(canonical,[]);byCanonical.get(canonical).push(school)}
       if(type && nd.number!==null){
         const k=type+'|'+nd.number;
         if(!byTypeNumber.has(k))byTypeNumber.set(k,[]);
-        byTypeNumber.get(k).push(s);
+        byTypeNumber.get(k).push(school);
         if(nd.district!==null){
           const kd=k+'|'+nd.district;
           if(!byTypeNumberDistrict.has(kd))byTypeNumberDistrict.set(kd,[]);
-          byTypeNumberDistrict.get(kd).push(s);
+          byTypeNumberDistrict.get(kd).push(school);
         }
       }
-      prepared.push(s);
+      prepared.push({school,tokens:schoolTokens(school.nombre||''),type,nd});
     }
-    return {byAnexo,byCue,byName,byCanonical,byTypeNumber,byTypeNumberDistrict,prepared};
+    schoolIndexMemoSource=schools;
+    schoolIndexMemo={byAnexo,byCue,byName,byCanonical,byTypeNumber,byTypeNumberDistrict,prepared,matchCache:new Map()};
+    return schoolIndexMemo;
   }
 
   function findMasterSchool(row,index=schoolMasterIndexes()){
     const raw=String(row?.schoolRaw||row?.school||'');
     const anexo=cleanCueAnexo(row?.cueAnexo)||extractCueAnexo(raw);
-    if(anexo && index.byAnexo.has(anexo)) return index.byAnexo.get(anexo);
-
     const cue=cleanCue(row?.cue)||cleanCue(anexo);
-    const n=normalize(cleanSchool(raw)||row?.school||'');
-    if(cue){
+    const cleaned=cleanSchool(raw)||row?.school||'';
+    const n=normalize(cleaned);
+    const cacheKey=[anexo,cue,n].join('|');
+    if(index.matchCache.has(cacheKey))return index.matchCache.get(cacheKey);
+
+    let result=null;
+    if(anexo && index.byAnexo.has(anexo)) result=index.byAnexo.get(anexo);
+
+    if(!result && cue){
       const candidates=index.byCue.get(cue)||[];
       if(n){
-        const named=candidates.find(s=>normalize(s.nombre_norm||s.nombre||'')===n);
-        if(named)return named;
+        const named=candidates.find(school=>normalize(school.nombre_norm||school.nombre||'')===n);
+        if(named)result=named;
       }
-      if(candidates.length===1)return candidates[0];
+      if(!result && candidates.length===1)result=candidates[0];
     }
 
-    if(n){
+    if(!result && n){
       const byName=index.byName.get(n)||[];
-      if(byName.length===1)return byName[0];
+      if(byName.length===1)result=byName[0];
     }
 
-    const canonical=schoolCanonical(cleanSchool(raw)||row?.school||'');
-    if(canonical){
+    const canonical=schoolCanonical(cleaned);
+    if(!result && canonical){
       const exact=index.byCanonical.get(canonical)||[];
-      if(exact.length===1)return exact[0];
+      if(exact.length===1)result=exact[0];
     }
 
     const nd=schoolNumberDistrict(raw), type=schoolType(raw);
-    if(type && nd.number!==null && nd.district!==null){
+    if(!result && type && nd.number!==null && nd.district!==null){
       const structured=index.byTypeNumberDistrict.get(type+'|'+nd.number+'|'+nd.district)||[];
-      if(structured.length===1)return structured[0];
+      if(structured.length===1)result=structured[0];
     }
-    if(type && nd.number!==null){
+    if(!result && type && nd.number!==null){
       const numbered=index.byTypeNumber.get(type+'|'+nd.number)||[];
-      if(numbered.length===1 && schoolSimilarity(raw,numbered[0].nombre)>=.45)return numbered[0];
+      if(numbered.length===1 && schoolSimilarity(raw,numbered[0].nombre)>=.45)result=numbered[0];
     }
 
-    if(raw){
-      const ranked=index.prepared
-        .map(s=>({s,score:schoolSimilarity(raw,s.nombre||'')}))
-        .filter(x=>x.score>=0)
-        .sort((a,b)=>b.score-a.score);
-      if(ranked.length && ranked[0].score>=.68 && (ranked.length===1 || ranked[0].score-ranked[1].score>=.10)) return ranked[0].s;
+    if(!result && raw){
+      const profile={tokens:schoolTokens(raw),type,nd};
+      let best=null,bestScore=-1,secondScore=-1;
+      for(const prepared of index.prepared){
+        const score=schoolSimilarityProfile(profile,prepared);
+        if(score>bestScore){
+          secondScore=bestScore;bestScore=score;best=prepared.school;
+        }else if(score>secondScore){
+          secondScore=score;
+        }
+      }
+      if(best && bestScore>=.68 && (secondScore<0 || bestScore-secondScore>=.10))result=best;
     }
-    return null;
+
+    index.matchCache.set(cacheKey,result||null);
+    return result;
   }
 
   function classifyArea(v=''){
     const raw=String(v||'').trim();
     if(!raw)return '';
     const areas=dataset.masters?.areas||[];
-    const byNorm=new Map(areas.map(a=>[normalize(a.area_norm||a.area),a.area]));
+    if(areaLookupMemoSource!==areas){
+      areaLookupMemoSource=areas;
+      areaLookupMemo=new Map(areas.map(a=>[normalize(a.area_norm||a.area),a.area]));
+    }
+    const byNorm=areaLookupMemo||new Map();
     const n=normalize(raw);
     if(byNorm.has(n))return byNorm.get(n);
     const aliases={
@@ -608,9 +678,13 @@
   function classifyCargo(v=''){
     const raw=String(v||'').trim();
     if(!raw)return '';
+    const cargos=dataset.masters?.cargos||[];
+    if(cargoLookupMemoSource!==cargos){
+      cargoLookupMemoSource=cargos;
+      cargoLookupMemo=new Map(cargos.map(x=>[normalize(x.origen),x.categoria]));
+    }
     const n=normalize(raw);
-    const item=(dataset.masters?.cargos||[]).find(x=>normalize(x.origen)===n);
-    return String(item?.categoria||raw).trim();
+    return String((cargoLookupMemo||new Map()).get(n)||raw).trim();
   }
 
   function enrichMasterRow(row,index=schoolMasterIndexes()){
@@ -800,11 +874,33 @@
     }
   }
 
+  function detectWorkbookActionCode(fileName,allSheets){
+    const fileCode=mainCodeIn(fileName);
+    const found=new Set();
+    for(const rows of Object.values(allSheets)){
+      for(const raw of rows.slice(0,1200)){
+        for(const [key,value] of Object.entries(raw)){
+          const nk=normalize(key);
+          if(!(nk.includes('accion')||nk.includes('codigo')))continue;
+          const code=nk.includes('accion')?actionCodeValue(value):mainCodeIn(value);
+          if(code)found.add(code);
+          if(found.size>8)break;
+        }
+        if(found.size>8)break;
+      }
+      if(found.size>8)break;
+    }
+    if(fileCode)return {code:fileCode,found:[...found]};
+    if(found.size===1)return {code:[...found][0],found:[...found]};
+    if(found.size>1)throw new Error('Se detectaron varios códigos de acción ('+[...found].join(', ')+'). Renombrá el archivo con el código C0000 correcto.');
+    throw new Error('No se detectó el código de acción. Usá C0000 en el nombre del archivo o una columna ACCIÓN/CÓDIGO.');
+  }
+
   function parseWorkbook(file, wb){
-    const code=mainCodeIn(file.name);
-    if(!code) throw new Error('No se detectó un código de acción tipo C0000 en el nombre del archivo.');
     const allSheets={};
     wb.SheetNames.forEach(name=>{ allSheets[name]=XLSX.utils.sheet_to_json(wb.Sheets[name],{defval:'',raw:true}) });
+    const detection=detectWorkbookActionCode(file.name,allSheets);
+    const code=detection.code;
     const sheetBy=(term)=>Object.entries(allSheets).find(([n])=>normalize(n).includes(term))?.[1] || [];
     const proposalsRows=sheetBy('propuesta');
     const regRows=sheetBy('inscrip');
@@ -813,6 +909,7 @@
     const tutorRows=sheetBy('tutor');
     const year=yearIn(file.name,[...proposalsRows.slice(0,4),...regRows.slice(0,4)]);
     const title=actionTitle(file.name,code);
+    const masterIndex=schoolMasterIndexes();
 
     const proposals=proposalsRows.map(raw=>{
       const m=mapRow(raw);
@@ -876,7 +973,7 @@
         source:file.name
       };
       row.cargoClass=classifyCargo(row.cargo);
-      return enrichMasterRow(row);
+      return enrichMasterRow(row,masterIndex);
     }).filter(r=>idOf(r));
 
     const attendance=attRows.map(raw=>{
@@ -924,7 +1021,7 @@
         source:file.name
       };
       row.cargoClass=classifyCargo(row.cargo);
-      return enrichMasterRow(row);
+      return enrichMasterRow(row,masterIndex);
     }).filter(r=>idOf(r));
 
     const tutors=parseTutorRows(tutorRows,code,file.name);
@@ -954,7 +1051,7 @@
         reason:String(pick(m,['MOTIVO','Motivo','Motivo de baja','Observaciones','Observación','Observacion'])||'').trim(),
         source:file.name
       };
-      return enrichMasterRow(row);
+      return enrichMasterRow(row,masterIndex);
     }).filter(r=>idOf(r));
 
     applyBajasToRegistrations(registrations,bajas);
@@ -1048,7 +1145,10 @@
     const successfulCodes=[];
     for(const file of files){
       try{
+        $('#importSummary').textContent='Procesando '+file.name+'...';
+        await new Promise(resolve=>requestAnimationFrame(()=>resolve()));
         const data=await file.arrayBuffer();
+        await new Promise(resolve=>setTimeout(resolve,0));
         const wb=XLSX.read(data,{type:'array',cellDates:true});
         const support=parseSupportWorkbook(file,wb);
         if(support){
@@ -2204,6 +2304,12 @@
     URL.revokeObjectURL(url);
   }
 
+  let filterApplyTimer=null;
+  function scheduleApplyFilters(delay=220){
+    clearTimeout(filterApplyTimer);
+    filterApplyTimer=setTimeout(()=>applyFilters(),delay);
+  }
+
   function bind(){
     $$('.nav-item').forEach(b=>b.addEventListener('click',()=>switchView(b.dataset.view)));
     $('#pickFiles').addEventListener('click',()=>$('#fileInput').click());
@@ -2213,20 +2319,34 @@
     ['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove('drag')}));
     dz.addEventListener('drop',e=>handleFiles([...e.dataTransfer.files]));
     ['filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterTutor','filterArea','filterVenue','filterShift','excludeDate','excludeSurname'].forEach(id=>{
-      $('#'+id).addEventListener('input',applyFilters);
+      $('#'+id).addEventListener('input',()=>scheduleApplyFilters());
       $('#'+id).addEventListener('change',applyFilters);
     });
     $('#filterDate').addEventListener('change',applyFilters);
-    $('#filterDateManual').addEventListener('input',applyFilters);
+    $('#filterDateManual').addEventListener('input',()=>scheduleApplyFilters());
     $('#filterAction').addEventListener('input',()=>{
-      const v=$('#filterAction').value.trim();
-      if(!v || dataset.actions.some(x=>x.code===v))refreshFilterOptions();
-      renderSavedFilters();
-      applyFilters();
+      const el=$('#filterAction');
+      const raw=el.value.trim();
+      const canonical=actionCodeValue(raw);
+      const exists=canonical&&dataset.actions.some(x=>x.code===canonical);
+      if(!raw){
+        refreshFilterOptions();renderSavedFilters();applyFilters();return;
+      }
+      if(exists){
+        if(el.value!==canonical)el.value=canonical;
+        refreshFilterOptions();renderSavedFilters();applyFilters();
+      }else{
+        renderSavedFilters();
+      }
     });
-    $('#filterAction').addEventListener('change',()=>{refreshFilterOptions();applyFilters()});
-    $('#globalSearch').addEventListener('input',applyFilters);
-    $('#detailSearch').addEventListener('input',renderDetail);
+    $('#filterAction').addEventListener('change',()=>{
+      const el=$('#filterAction');
+      const canonical=actionCodeValue(el.value);
+      if(canonical&&dataset.actions.some(x=>x.code===canonical))el.value=canonical;
+      refreshFilterOptions();renderSavedFilters();applyFilters();
+    });
+    $('#globalSearch').addEventListener('input',()=>scheduleApplyFilters());
+    $('#detailSearch').addEventListener('input',()=>{clearTimeout(renderDetail.t);renderDetail.t=setTimeout(renderDetail,180)});
     $('#savedFilterSelect').addEventListener('change',()=>{
       const id=$('#savedFilterSelect').value;
       $('#deleteFilterBtn').disabled=!id;
@@ -2269,7 +2389,8 @@
       if(btn)toggleActionStatus(btn.dataset.toggleActionStatus);
     });
     $('#sourceForm')?.addEventListener('submit',saveSourceFromForm);
-    $('#sourceAction')?.addEventListener('input',e=>{e.target.value=e.target.value.toUpperCase().replace(/[^C0-9]/g,'').slice(0,5)});
+    $('#sourceAction')?.addEventListener('input',e=>{e.target.value=e.target.value.toUpperCase().replace(/[^C0-9 _-]/g,'').slice(0,8)});
+    $('#sourceAction')?.addEventListener('change',e=>{const c=actionCodeValue(e.target.value);if(c)e.target.value=c});
   }
 
   async function init(){

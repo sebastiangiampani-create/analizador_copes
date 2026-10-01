@@ -2275,6 +2275,10 @@
     if(scope==='global'){
       dataset.customFields=[...(dataset.customFields||[]).filter(f=>f.id!==id),item];
       await saveState();
+      if(!remoteReady){
+        const ok=await ensureRemoteAccess({interactive:true});
+        if(!ok)throw new Error('Supabase no está conectado.');
+      }
       await saveRemoteConfig();
     }else{
       const cfg=actionEditorConfig(code);
@@ -2288,8 +2292,14 @@
     const field=fieldDefinitionById(id,scope,code); if(!field)return;
     field.active=field.active===false?true:false;
     field.updatedAt=new Date().toISOString();
-    if(scope==='global'){await saveState();await saveRemoteConfig();}
-    else await persistEditorAction(code);
+    if(scope==='global'){
+      await saveState();
+      if(!remoteReady){
+        const ok=await ensureRemoteAccess({interactive:true});
+        if(!ok)throw new Error('Supabase no está conectado.');
+      }
+      await saveRemoteConfig();
+    }else await persistEditorAction(code);
     renderEditor();
     toast(field.active===false?'Campo desactivado; los datos se conservan.':'Campo activado.');
   }
@@ -2359,7 +2369,7 @@
       if(editorState.isNew){
         base._manualId=editorId();
         base._manualAdded=true;
-        cfg.additions[type].push(stripEditorMeta({...base,_manualId:base._manualId}));
+        cfg.additions[type].push({...stripEditorMeta(base),_manualId:base._manualId});
         dataset[type].push(base);
       }else{
         const key=recordIdentity(type,current);

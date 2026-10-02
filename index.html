@@ -429,6 +429,55 @@
             </article>
           </div>
 
+          <article class="panel custom-report-panel">
+            <div class="panel-head">
+              <div>
+                <h3>Informe personalizado</h3>
+                <p>Construí una tabla a medida con los datos ya filtrados: elegí base, columnas y agrupación.</p>
+              </div>
+              <span class="panel-chip">Excel / CSV / PDF</span>
+            </div>
+            <div class="custom-report-controls">
+              <label class="field">
+                <span>Título de la tabla</span>
+                <input id="customReportTitle" type="text" value="Participación personalizada" />
+              </label>
+              <label class="field">
+                <span>Base</span>
+                <select id="customReportDataset">
+                  <option value="registrations">Personas / inscripciones</option>
+                  <option value="attendance">Asistencias</option>
+                  <option value="bajas">Bajas</option>
+                  <option value="proposals">Comisiones / propuestas</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Agrupar por</span>
+                <select id="customReportGroupBy"><option value="">Sin agrupación</option></select>
+              </label>
+              <label class="field">
+                <span>Filtro dentro de esta tabla</span>
+                <input id="customReportSearch" type="search" placeholder="Buscar en los resultados filtrados..." />
+              </label>
+            </div>
+            <div>
+              <span class="field-title">Columnas</span>
+              <div id="customReportColumns" class="report-columns"></div>
+            </div>
+            <div class="custom-report-actions">
+              <button id="customReportPreviewBtn" type="button" class="btn ghost">Previsualizar tabla</button>
+              <button id="customReportAddBtn" type="button" class="btn ghost">Agregar al informe</button>
+              <button id="customReportExcelBtn" type="button" class="btn primary">Exportar Excel</button>
+              <button id="customReportCsvBtn" type="button" class="btn ghost">Exportar CSV</button>
+            </div>
+            <div class="table-scroll custom-report-preview-scroll">
+              <table>
+                <thead id="customReportPreviewHead"></thead>
+                <tbody id="customReportPreviewBody"><tr><td class="empty">Configurá la tabla y previsualizá.</td></tr></tbody>
+              </table>
+            </div>
+          </article>
+
           <article class="panel report-preview-panel">
             <div class="panel-head">
               <div><h3>Vista previa</h3><p>Así se construirá el informe con los filtros y gráficos actuales.</p></div>

@@ -63,6 +63,7 @@
   let chartPrefs=readLocalJson(CHART_PREF_KEY,{});
   let reportDraft={title:'Informe de acciones formativas',subtitle:'',notes:'',includeFilters:true,items:[],...readLocalJson(REPORT_DRAFT_KEY,{})};
   const MULTI_FILTER_DEFS={
+    filterAction:{label:'ACCIÓN'},
     filterSchool:{label:'ESCUELA'},
     filterDependency:{label:'DEPENDENCIA'},
     filterSector:{label:'SECTOR DE GESTIÓN'},
@@ -1354,6 +1355,8 @@
 
     const okCount=results.filter(x=>x.ok).length;
     if(okCount){
+      clearAllMultiFilters();
+      syncActionFilterInput();
       ['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterTutor','filterArea','filterVenue','filterShift','excludeDate'].forEach(id=>{const el=$('#'+id);if(el)el.value=''});
       setSelectedValues($('#filterDate'),[]);if($('#filterDateManual'))$('#filterDateManual').value='';
       ['globalSearch','excludeSurname'].forEach(id=>{const el=$('#'+id);if(el)el.value=''});
@@ -1489,6 +1492,13 @@
             '<div class="multi-filter-options"></div>'+
           '</div>'+
         '</details>';
+      if(id==='filterAction'){
+        input.type='hidden';
+        input.removeAttribute('list');
+        input.removeAttribute('autocomplete');
+        input.removeAttribute('placeholder');
+        wrap.appendChild(input);
+      }
       oldLabel.replaceWith(wrap);
       multiFilterState[id]=new Set();
     }
@@ -1496,6 +1506,13 @@
 
   function multiFilterValues(id){
     return [...(multiFilterState[id]||new Set())];
+  }
+
+  function syncActionFilterInput(){
+    const input=$('#filterAction');
+    if(!input)return;
+    const selected=multiFilterValues('filterAction');
+    input.value=selected.length===1?selected[0]:'';
   }
 
   function multiFilterMatch(value,selected){
@@ -1541,9 +1558,11 @@
   }
 
   function currentFilters(){
-    const action=$('#filterAction')?.value.trim()||'';
+    const actions=multiFilterValues('filterAction');
+    const action=actions.length===1?actions[0]:'';
     return {
       action,
+      actions,
       schools:multiFilterValues('filterSchool'),
       dependencies:multiFilterValues('filterDependency'),
       sectors:multiFilterValues('filterSector'),
@@ -1565,7 +1584,8 @@
   }
   function rowDate(r){ return r.eventDate || r.registrationDate || r.capturedAt || ''; }
   function matchesBase(r,f){
-    if(f.action && !textMatch(r.actionCode,f.action))return false;
+    if((f.actions||[]).length && !(f.actions||[]).includes(r.actionCode))return false;
+    if(!(f.actions||[]).length && f.action && !textMatch(r.actionCode,f.action))return false;
     if(!multiFilterMatch(r.school,f.schools))return false;
     if(!multiFilterMatch(r.dependency,f.dependencies))return false;
     if(!multiFilterMatch(r.sector,f.sectors))return false;
@@ -1621,14 +1641,15 @@
   }
 
   function refreshFilterOptions(){
-    const action=$('#filterAction')?.value.trim() || '';
-    const exactAction=dataset.actions.some(x=>x.code===action)?action:'';
     const actionLabels={};
     dataset.actions.forEach(a=>{actionLabels[a.code]=a.code+' · '+(a.status==='finalizada'?'Finalizada':'Activa')});
-    fillDatalist('filterActionList',dataset.actions.map(x=>x.code),v=>v,actionLabels);
+    setMultiFilterOptions('filterAction',dataset.actions.map(x=>x.code));
+    syncActionFilterInput();
 
-    const regs=exactAction ? dataset.registrations.filter(x=>x.actionCode===exactAction) : dataset.registrations;
-    const props=exactAction ? dataset.proposals.filter(x=>x.actionCode===exactAction) : dataset.proposals;
+    const selectedActions=multiFilterValues('filterAction');
+    const actionSet=new Set(selectedActions);
+    const regs=selectedActions.length ? dataset.registrations.filter(x=>actionSet.has(x.actionCode)) : dataset.registrations;
+    const props=selectedActions.length ? dataset.proposals.filter(x=>actionSet.has(x.actionCode)) : dataset.proposals;
     setMultiFilterOptions('filterSchool',regs.map(x=>x.school));
     setMultiFilterOptions('filterDependency',regs.map(x=>x.dependency));
     setMultiFilterOptions('filterSector',regs.map(x=>x.sector));
@@ -1639,12 +1660,13 @@
     setMultiFilterOptions('filterVenue',regs.map(x=>x.venue).concat(props.map(x=>x.venue)));
     setMultiFilterOptions('filterShift',regs.map(x=>x.shift).concat(props.map(x=>x.shift)));
     setMultiFilterOptions('filterCargo',regs.map(x=>x.cargoClass||x.cargo));
-    const atts=exactAction ? dataset.attendance.filter(x=>x.actionCode===exactAction) : dataset.attendance;
+    const atts=selectedActions.length ? dataset.attendance.filter(x=>actionSet.has(x.actionCode)) : dataset.attendance;
     fillMultiSelect($('#filterDate'),atts.map(x=>x.eventDate).filter(Boolean),formatDate);
   }
   function selectedAction(){
-    const code=$('#filterAction')?.value||'';
-    return code?dataset.actions.find(x=>x.code===code):null;
+    const selected=multiFilterValues('filterAction');
+    if(selected.length!==1)return null;
+    return dataset.actions.find(x=>x.code===selected[0])||null;
   }
 
   function renderActionLifecycle(){
@@ -1668,7 +1690,8 @@
   }
 
   async function toggleActionStatus(code=''){
-    const actionCode=code||$('#filterAction')?.value||'';
+    const selected=multiFilterValues('filterAction');
+    const actionCode=code||(selected.length===1?selected[0]:'');
     const action=dataset.actions.find(x=>x.code===actionCode);
     if(!action)return;
     const closing=action.status!=='finalizada';
@@ -1696,7 +1719,9 @@
 
     renderImportResults();
     refreshFilterOptions();
-    if($('#filterAction'))$('#filterAction').value=actionCode;
+    multiFilterState.filterAction=new Set([actionCode]);
+    syncActionFilterInput();
+    refreshFilterOptions();
     applyFilters();
   }
 
@@ -1720,7 +1745,8 @@
     );
 
     filtered.proposals=dataset.proposals.filter(p=>{
-      if(f.action && !textMatch(p.actionCode,f.action))return false;
+      if((f.actions||[]).length && !(f.actions||[]).includes(p.actionCode))return false;
+      if(!(f.actions||[]).length && f.action && !textMatch(p.actionCode,f.action))return false;
       if((f.tutors||[]).length && !f.tutors.some(v=>(p.tutors||[]).some(x=>textMatch(x,v))))return false;
       if((f.areas||[]).length && !f.areas.some(v=>textMatch(p.area,v)))return false;
       if((f.venues||[]).length && !f.venues.some(v=>textMatch(p.venue,v)))return false;
@@ -1735,6 +1761,11 @@
       return true;
     });
     renderDashboard(); renderDetail(); renderActionLifecycle();
+    if($('#view-reports')?.classList.contains('active')){
+      renderCustomReportConfigurator();
+      renderCustomReportPreview();
+      renderReportPreview();
+    }
   }
 
   function filterSnapshot(){ return {...currentFilters()}; }
@@ -1845,11 +1876,13 @@
     $('#excelBtn').disabled=!regs.length;
     $('#printBtn').disabled=!regs.length;
 
-    const action=$('#filterAction').value;
-    const act=dataset.actions.find(x=>x.code===action);
+    const selectedActions=multiFilterValues('filterAction');
+    const act=selectedActions.length===1?dataset.actions.find(x=>x.code===selectedActions[0]):null;
     $('#subtitle').textContent=act
       ? `${act.code} · ${act.title} · ${act.status==='finalizada'?'FINALIZADA':'ACTIVA'}`
-      : (dataset.actions.length ? `${dataset.actions.length} acciones cargadas · filtros interactivos` : 'Carga una base para empezar a analizar.');
+      : (selectedActions.length>1
+          ? `${selectedActions.length} acciones seleccionadas · filtros interactivos`
+          : (dataset.actions.length ? `${dataset.actions.length} acciones cargadas · filtros interactivos` : 'Carga una base para empezar a analizar.'));
 
     const metrics=eventMetrics(regs,atts);
     const selectedDates=currentFilters().dates||[];
@@ -2058,10 +2091,12 @@
   }
 
   function reportCatalog(){
+    const customTitle=$('#customReportTitle')?.value.trim()||'Participación personalizada';
     return [
       ...Object.entries(KPI_META).map(([id,title])=>({key:'kpi:'+id,kind:'Indicador',title})),
       ...Object.entries(CHART_META).map(([id,meta])=>({key:'chart:'+id,kind:'Gráfico',title:meta.title})),
-      ...Object.entries(TABLE_META).map(([id,title])=>({key:'table:'+id,kind:'Tabla',title}))
+      ...Object.entries(TABLE_META).map(([id,title])=>({key:'table:'+id,kind:'Tabla',title})),
+      {key:'custom:table',kind:'Tabla',title:customTitle}
     ];
   }
 
@@ -2135,6 +2170,7 @@
       return '<section class="report-output-block report-table-block"><h2>'+esc(meta.title)+'</h2>'+
         (table?cleanClone(table).outerHTML:'<div class="empty">Sin datos.</div>')+'</section>';
     }
+    if(kind==='custom'&&id==='table')return customReportTableHtml();
     return '';
   }
 
@@ -2921,9 +2957,142 @@
     toast('Informe personalizado exportado.');
   }
 
+  let customReportColumns=[];
+
+  function filteredRowsForCustomReport(type){
+    const rows=Array.isArray(filtered[type])?filtered[type]:[];
+    const q=normalize($('#customReportSearch')?.value||'');
+    if(!q)return rows;
+    return rows.filter(r=>normalize(Object.entries(r||{})
+      .filter(([k])=>!k.startsWith('_'))
+      .map(([,v])=>displayEditorValue(v)).join(' ')).includes(q));
+  }
+
+  function customReportFields(type){
+    const rows=filteredRowsForCustomReport(type).slice(0,500);
+    const preferred=PREFERRED_FIELDS[type]||[];
+    const keys=new Set(preferred);
+    rows.forEach(r=>Object.keys(r||{}).forEach(k=>{
+      if(k.startsWith('_'))return;
+      keys.add(k);
+    }));
+    return [...keys].filter(Boolean).sort((a,b)=>{
+      const ai=preferred.indexOf(a),bi=preferred.indexOf(b);
+      if(ai>=0||bi>=0)return (ai<0?999:ai)-(bi<0?999:bi);
+      return (FIELD_LABELS[a]||a).localeCompare(FIELD_LABELS[b]||b,'es');
+    }).map(key=>({key,label:FIELD_LABELS[key]||key}));
+  }
+
+  function renderCustomReportConfigurator(){
+    const host=$('#customReportColumns');
+    if(!host)return;
+    const type=$('#customReportDataset')?.value||'registrations';
+    const fields=customReportFields(type);
+    const valid=new Set(fields.map(f=>f.key));
+    customReportColumns=customReportColumns.filter(x=>valid.has(x));
+    if(!customReportColumns.length)customReportColumns=fields.slice(0,8).map(f=>f.key);
+    const selected=new Set(customReportColumns);
+    host.innerHTML=fields.map(f=>'<label class="report-column"><input type="checkbox" value="'+esc(f.key)+'" '+(selected.has(f.key)?'checked':'')+' /> '+esc(f.label)+'</label>').join('')||'<div class="empty">No hay columnas disponibles con los filtros actuales.</div>';
+    const group=$('#customReportGroupBy');
+    if(group){
+      const old=group.value;
+      group.innerHTML='<option value="">Sin agrupación</option>'+fields.map(f=>'<option value="'+esc(f.key)+'">'+esc(f.label)+'</option>').join('');
+      if(fields.some(f=>f.key===old))group.value=old;
+    }
+  }
+
+  function buildFilteredCustomReport(){
+    const type=$('#customReportDataset')?.value||'registrations';
+    const fields=customReportFields(type);
+    const fieldMap=new Map(fields.map(f=>[f.key,f]));
+    const checked=$('#customReportColumns')
+      ? [...$('#customReportColumns').querySelectorAll('input:checked')].map(x=>x.value)
+      : customReportColumns;
+    const chosen=checked.length?checked:fields.slice(0,8).map(f=>f.key);
+    customReportColumns=chosen;
+    const rows=filteredRowsForCustomReport(type);
+    const groupBy=$('#customReportGroupBy')?.value||'';
+    const title=$('#customReportTitle')?.value.trim()||'Participación personalizada';
+
+    if(groupBy){
+      const groups=new Map();
+      for(const r of rows){
+        const raw=r?.[groupBy];
+        const label=displayEditorValue(raw);
+        if(!groups.has(label))groups.set(label,{records:0,people:new Set()});
+        const g=groups.get(label);
+        g.records++;
+        const person=idOf(r);if(person)g.people.add(person);
+      }
+      const groupLabel=fieldMap.get(groupBy)?.label||FIELD_LABELS[groupBy]||groupBy;
+      return {
+        title,type,
+        rows:[...groups.entries()].map(([label,g])=>({
+          [groupLabel]:label==='—'?'Sin dato':label,
+          REGISTROS:g.records,
+          PERSONAS:g.people.size||g.records
+        }))
+      };
+    }
+
+    return {
+      title,type,
+      rows:rows.map(r=>Object.fromEntries(chosen.map(k=>{
+        const label=fieldMap.get(k)?.label||FIELD_LABELS[k]||k;
+        const value=displayEditorValue(r?.[k]);
+        return [label,value==='—'?'':value];
+      })))
+    };
+  }
+
+  function renderCustomReportPreview(){
+    const report=buildFilteredCustomReport();
+    const head=$('#customReportPreviewHead'),body=$('#customReportPreviewBody');
+    if(!head||!body)return report;
+    const cols=report.rows.length?Object.keys(report.rows[0]):[];
+    head.innerHTML=cols.length?'<tr>'+cols.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr>':'';
+    body.innerHTML=report.rows.slice(0,300).map(r=>'<tr>'+cols.map(c=>'<td>'+esc(displayEditorValue(r[c]))+'</td>').join('')+'</tr>').join('')
+      || '<tr><td class="empty">Sin resultados con los filtros actuales.</td></tr>';
+    if(report.rows.length>300){
+      body.insertAdjacentHTML('beforeend','<tr><td colspan="'+Math.max(cols.length,1)+'" class="empty">Vista previa limitada a 300 filas · la exportación incluye '+report.rows.length.toLocaleString('es-AR')+'.</td></tr>');
+    }
+    return report;
+  }
+
+  function exportFilteredCustomReportExcel(){
+    const report=buildFilteredCustomReport();
+    if(!report.rows.length){toast('No hay datos para exportar.');return}
+    const wb=XLSX.utils.book_new();
+    appendJsonSheet(wb,'Informe',report.rows);
+    XLSX.writeFile(wb,exportFileStem()+'_personalizado.xlsx',{compression:true});
+    toast('Informe personalizado exportado a Excel.');
+  }
+
+  function exportFilteredCustomReportCsv(){
+    const report=buildFilteredCustomReport();
+    if(!report.rows.length){toast('No hay datos para exportar.');return}
+    const ws=XLSX.utils.json_to_sheet(report.rows);
+    const csv=XLSX.utils.sheet_to_csv(ws);
+    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download=exportFileStem()+'_personalizado.csv';a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function customReportTableHtml(){
+    const report=buildFilteredCustomReport();
+    const cols=report.rows.length?Object.keys(report.rows[0]):[];
+    if(!cols.length)return '<div class="empty">Sin datos para la tabla personalizada.</div>';
+    return '<section class="report-output-block report-table-block"><h2>'+esc(report.title)+'</h2>'+
+      '<table><thead><tr>'+cols.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr></thead><tbody>'+
+      report.rows.map(r=>'<tr>'+cols.map(c=>'<td>'+esc(displayEditorValue(r[c]))+'</td>').join('')+'</tr>').join('')+
+      '</tbody></table></section>';
+  }
+
   function renderAll(){
-    refreshFilterOptions(); renderImportResults(); renderSources(); applyFilters(); renderEditor();
-    initChartControls(); initReportPickers(); renderReportBuilder();
+    refreshFilterOptions(); renderImportResults(); renderSources(); applyFilters();
+    initChartControls(); initReportPickers(); renderCustomReportConfigurator(); renderReportBuilder();
   }
 
   function switchView(name){
@@ -2932,14 +3101,15 @@
     $('#view-'+name)?.classList.add('active');
     document.querySelector(`.nav-item[data-view="${name}"]`)?.classList.add('active');
     if(name==='reports'){
+      renderCustomReportConfigurator();
       renderReportBuilder();
-      requestAnimationFrame(()=>renderReportPreview());
+      requestAnimationFrame(()=>{renderCustomReportPreview();renderReportPreview()});
     }
   }
 
   function exportFileStem(){
     const f=currentFilters();
-    const action=f.action || 'todas';
+    const action=(f.actions||[]).length ? (f.actions.length<=3?f.actions.join('-'):f.actions.length+'-acciones') : 'todas';
     const date=(f.dates?.length===1?f.dates[0]:'') || new Date().toISOString().slice(0,10);
     return ('Analisis_de_acciones_'+action+'_'+date).replace(/[^A-Za-z0-9_-]+/g,'_');
   }
@@ -2948,7 +3118,7 @@
     const f=currentFilters();
     const joined=(arr)=>(arr||[]).join(' · ');
     const pairs=[
-      ['Acción',f.action],['Escuela',joined(f.schools)],['Dependencia',joined(f.dependencies)],
+      ['Acción',joined(f.actions)],['Escuela',joined(f.schools)],['Dependencia',joined(f.dependencies)],
       ['Sector de gestión',joined(f.sectors)],['Comuna',joined(f.comunas)],['Estado',joined(f.statuses)],
       ['Fechas de encuentro',(f.dates||[]).map(formatDate).join(' · ')],['Tutor / capacitador',joined(f.tutors)],
       ['Área',joined(f.areas)],['Sede',joined(f.venues)],['Turno',joined(f.shifts)],['Cargo',joined(f.cargos)],
@@ -3223,6 +3393,7 @@
       const set=multiFilterState[id]||(multiFilterState[id]=new Set());
       if(checkbox.checked)set.add(checkbox.value);else set.delete(checkbox.value);
       updateMultiFilterSummary(id);
+      if(id==='filterAction'){syncActionFilterInput();refreshFilterOptions()}
       applyFilters();
     });
     document.addEventListener('input',e=>{
@@ -3247,6 +3418,7 @@
         if(all)set.add(cb.value);else set.delete(cb.value);
       });
       updateMultiFilterSummary(id);
+      if(id==='filterAction'){syncActionFilterInput();refreshFilterOptions()}
       applyFilters();
     });
     $('#filterDate').addEventListener('change',applyFilters);
@@ -3275,8 +3447,8 @@
     $('#globalSearch').addEventListener('input',()=>scheduleApplyFilters());
     $('#detailSearch').addEventListener('input',()=>{clearTimeout(renderDetail.t);renderDetail.t=setTimeout(renderDetail,180)});
     $('#clearFilters').addEventListener('click',()=>{
-      $('#filterAction').value='';
       clearAllMultiFilters();
+      syncActionFilterInput();
       setSelectedValues($('#filterDate'),[]);
       $('#filterDateManual').value='';
       $('#globalSearch').value='';
@@ -3313,6 +3485,20 @@
     });
     $('#reportPreview')?.addEventListener('click',renderReportPreview);
     $('#reportPrint')?.addEventListener('click',()=>printReport());
+    $('#customReportDataset')?.addEventListener('change',()=>{customReportColumns=[];renderCustomReportConfigurator();renderCustomReportPreview()});
+    $('#customReportGroupBy')?.addEventListener('change',renderCustomReportPreview);
+    $('#customReportSearch')?.addEventListener('input',()=>{clearTimeout(renderCustomReportPreview.t);renderCustomReportPreview.t=setTimeout(()=>{renderCustomReportConfigurator();renderCustomReportPreview()},180)});
+    $('#customReportColumns')?.addEventListener('change',e=>{
+      if(e.target.matches('input[type="checkbox"]')){
+        customReportColumns=[...$('#customReportColumns').querySelectorAll('input:checked')].map(x=>x.value);
+        renderCustomReportPreview();
+      }
+    });
+    $('#customReportTitle')?.addEventListener('input',()=>{renderReportBuilder();if(reportDraft.items.includes('custom:table'))renderReportPreview()});
+    $('#customReportPreviewBtn')?.addEventListener('click',renderCustomReportPreview);
+    $('#customReportAddBtn')?.addEventListener('click',()=>{renderCustomReportPreview();addReportItem('custom:table')});
+    $('#customReportExcelBtn')?.addEventListener('click',exportFilteredCustomReportExcel);
+    $('#customReportCsvBtn')?.addEventListener('click',exportFilteredCustomReportCsv);
     $('#excelBtn').addEventListener('click',exportExcel);
     $('#exportBtn').addEventListener('click',exportCsv);
     window.addEventListener('beforeprint',updatePrintMeta);
@@ -3352,6 +3538,7 @@
 
   async function init(){
     initMultiFilterWidgets();
+    syncActionFilterInput();
     bind();
     await loadState();
     renderAll();

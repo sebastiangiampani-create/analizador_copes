@@ -428,3 +428,14 @@ tbody tr:hover{background:#f7faf9}
 @media(max-width:640px){
   .multi-filter-popover{position:fixed;left:12px;right:12px;top:auto;width:auto;max-height:55vh}
 }
+
+
+/* Informe personalizado dentro de Informes */
+.custom-report-panel{display:grid;gap:16px}
+.custom-report-controls{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.custom-report-actions{display:flex;flex-wrap:wrap;gap:8px}
+.custom-report-preview-scroll{max-height:520px}
+.custom-report-preview-scroll table{min-width:720px}
+.custom-report-preview-scroll th{position:sticky;top:0;z-index:2;background:#f7faf9}
+@media(max-width:980px){.custom-report-controls{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:640px){.custom-report-controls{grid-template-columns:1fr}.custom-report-actions .btn{width:100%}}

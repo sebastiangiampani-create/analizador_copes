@@ -25,7 +25,6 @@
         <button class="nav-item" data-view="imports"><span class="nav-icon">⇧</span><span>Cargar bases</span></button>
         <button class="nav-item" data-view="sources"><span class="nav-icon">↻</span><span>Fuentes</span></button>
         <button class="nav-item" data-view="reports"><span class="nav-icon">▤</span><span>Informes</span></button>
-        <button class="nav-item" data-view="editor"><span class="nav-icon">✎</span><span>Editar base</span></button>
         <button class="nav-item" data-view="detail"><span class="nav-icon">≡</span><span>Detalle</span></button>
       </nav>
 
@@ -72,9 +71,7 @@
               <span>Todos los gráficos y tablas responden a esta selección.</span>
             </div>
             <div class="filter-actions">
-              <select id="savedFilterSelect" class="saved-filter-select"><option value="">Filtro guardado...</option></select>
-              <button id="saveFilterBtn" class="btn ghost compact">Guardar filtro</button>
-              <button id="deleteFilterBtn" class="btn ghost compact" disabled>Eliminar</button>
+              <span class="multi-filter-note">Los campos de selección admiten varias categorías.</span>
               <button id="clearFilters" class="btn ghost compact">Limpiar filtros</button>
             </div>
           </div>
@@ -124,16 +121,8 @@
               <input id="filterShift" list="filterShiftList" type="text" autocomplete="off" placeholder="Escribí o elegí..." />
               <datalist id="filterShiftList"></datalist>
             </label>
-            <label>Excluir apellidos
-              <input id="excludeSurname" list="excludeSurnameList" type="text" autocomplete="off" placeholder="Pérez, González, López" />
-              <datalist id="excludeSurnameList"></datalist>
-              <small class="filter-help">Podés escribir varios, separados por coma.</small>
-            </label>
-            <label>Excluir fechas
-              <input id="excludeDate" list="excludeDateList" type="text" autocomplete="off" placeholder="12/08/2026, 26/08/2026" />
-              <datalist id="excludeDateList"></datalist>
-              <small class="filter-help">Admite dd/mm/aaaa o aaaa-mm-dd, separados por coma.</small>
-            </label>
+            
+            
             <label class="search-label">Buscar<input id="globalSearch" type="search" placeholder="DNI, escuela, docente, tutor..." /></label>
           </div>
           <div id="actionLifecycleBar" class="action-lifecycle-bar" hidden>
@@ -150,7 +139,7 @@
         <div class="kpi-grid">
           <article class="kpi">
             <div class="kpi-icon">👥</div>
-            <span>Docentes inscriptos</span><strong id="kpiRegistered">0</strong><small id="kpiRegisteredHint">personas únicas</small>
+            <span>Docentes inscriptos</span><strong id="kpiRegistered">0</strong><small id="kpiRegisteredHint">personas</small>
           </article>
           <article class="kpi">
             <div class="kpi-icon">✓</div>
@@ -158,7 +147,7 @@
           </article>
           <article class="kpi accent">
             <div class="kpi-icon">%</div>
-            <span>Asistencia</span><strong id="kpiRate">0%</strong><small>asistentes únicos / inscriptos únicos</small>
+            <span>Asistencia</span><strong id="kpiRate">0%</strong><small>asistentes / inscriptos</small>
           </article>
           <article class="kpi accent-secondary">
             <div class="kpi-icon">%</div>
@@ -205,7 +194,7 @@
           </article>
 
           <article class="panel wide">
-            <div class="panel-head"><div><h3>Inscriptos vs asistentes por área</h3><p>Comparación de docentes únicos según el área informada</p></div><span class="panel-chip">Comparativo</span></div>
+            <div class="panel-head"><div><h3>Inscriptos vs asistentes por área</h3><p>Comparación de docentes según el área informada</p></div><span class="panel-chip">Comparativo</span></div>
             <div class="chart-wrap tall"><canvas id="areaCompareChart"></canvas></div>
           </article>
 
@@ -235,11 +224,11 @@
             <div class="chart-wrap"><canvas id="schoolChart"></canvas></div>
           </article>
           <article class="panel">
-            <div class="panel-head"><div><h3>Sedes</h3><p>Asistentes únicos</p></div></div>
+            <div class="panel-head"><div><h3>Sedes</h3><p>Asistentes</p></div></div>
             <div class="chart-wrap"><canvas id="venueChart"></canvas></div>
           </article>
           <article class="panel">
-            <div class="panel-head"><div><h3>Tutores / capacitadores</h3><p>Asistentes únicos</p></div></div>
+            <div class="panel-head"><div><h3>Tutores / capacitadores</h3><p>Asistentes</p></div></div>
             <div class="chart-wrap"><canvas id="tutorChart"></canvas></div>
           </article>
           <article class="panel">
@@ -449,107 +438,6 @@
         </div>
       </section>
 
-      <section id="view-editor" class="view">
-        <div class="page-intro">
-          <span class="section-kicker">EDICIÓN DE BASE</span>
-          <h2>Revisar y editar registros</h2>
-          <p>Acceso directo, sin una clave de administrador adicional. Los cambios se guardan en la acción y se persisten en Supabase.</p>
-        </div>
-
-        <article class="panel editor-toolbar">
-          <div class="editor-controls">
-            <label class="field">
-              <span>Acción</span>
-              <select id="editorAction"></select>
-            </label>
-            <label class="field">
-              <span>Base</span>
-              <select id="editorDataset">
-                <option value="registrations">Personas / inscripciones</option>
-                <option value="attendance">Asistencias</option>
-                <option value="bajas">Bajas</option>
-                <option value="tutors">Tutores / capacitadores</option>
-                <option value="proposals">Comisiones / propuestas</option>
-              </select>
-            </label>
-            <label class="field editor-search-field">
-              <span>Buscar dentro de la base</span>
-              <input id="editorSearch" type="search" placeholder="DNI, docente, escuela, comisión, campo..." />
-            </label>
-            <div class="editor-toolbar-actions">
-              <button id="editorAddRecord" type="button" class="btn primary">+ Agregar registro</button>
-              <button id="editorAddField" type="button" class="btn ghost">+ Agregar campo</button>
-            </div>
-          </div>
-          <div class="editor-status-line">
-            <span id="editorCount">0 registros</span>
-            <span>Podés abrir cualquier fila para editar todos sus campos.</span>
-          </div>
-        </article>
-
-        <div class="editor-grid">
-          <article class="panel editor-table-panel">
-            <div class="panel-head">
-              <div><h3>Base editable</h3><p>Los registros agregados o modificados manualmente se mantienen aunque vuelvas a importar o sincronizar la acción.</p></div>
-            </div>
-            <div class="table-scroll editor-table-scroll">
-              <table class="editor-table">
-                <thead id="editorTableHead"></thead>
-                <tbody id="editorTableBody"></tbody>
-              </table>
-            </div>
-          </article>
-
-          <article class="panel editor-fields-panel">
-            <div class="panel-head">
-              <div><h3>Campos personalizados</h3><p>Podés crear, renombrar o desactivar campos para esta acción o para todas.</p></div>
-            </div>
-            <div id="editorFieldsList" class="editor-fields-list"></div>
-          </article>
-        </div>
-
-        <article class="panel report-builder">
-          <div class="panel-head">
-            <div><h3>Informe personalizado</h3><p>Elegí la base, las columnas y, si querés, agrupá los resultados.</p></div>
-            <span class="panel-chip">A demanda</span>
-          </div>
-          <div class="report-controls">
-            <label class="field">
-              <span>Base del informe</span>
-              <select id="reportDataset">
-                <option value="registrations">Personas / inscripciones</option>
-                <option value="attendance">Asistencias</option>
-                <option value="bajas">Bajas</option>
-                <option value="tutors">Tutores / capacitadores</option>
-                <option value="proposals">Comisiones / propuestas</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>Agrupar por</span>
-              <select id="reportGroupBy"><option value="">Sin agrupación</option></select>
-            </label>
-            <label class="field editor-search-field">
-              <span>Filtro libre</span>
-              <input id="reportSearch" type="search" placeholder="Buscar dentro del informe..." />
-            </label>
-          </div>
-          <div>
-            <span class="field-title">Columnas</span>
-            <div id="reportColumns" class="report-columns"></div>
-          </div>
-          <div class="report-actions">
-            <button id="reportPreviewBtn" type="button" class="btn ghost">Previsualizar</button>
-            <button id="reportExportBtn" type="button" class="btn primary">Exportar Excel</button>
-          </div>
-          <div class="table-scroll report-preview-scroll">
-            <table>
-              <thead id="reportPreviewHead"></thead>
-              <tbody id="reportPreviewBody"></tbody>
-            </table>
-          </div>
-        </article>
-      </section>
-
       <section id="view-detail" class="view">
         <div class="page-intro">
           <span class="section-kicker">EXPLORADOR</span>
@@ -570,86 +458,6 @@
   </div>
 
   <div id="reportPrintRoot" class="report-print-root" aria-hidden="true"></div>
-
-  <div id="editorRecordModal" class="storage-modal" hidden>
-    <div class="storage-modal-card editor-record-card">
-      <div class="modal-head">
-        <div>
-          <span class="section-kicker">REGISTRO</span>
-          <h3 id="editorRecordTitle">Editar registro</h3>
-        </div>
-        <button id="editorRecordClose" type="button" class="modal-x" aria-label="Cerrar">×</button>
-      </div>
-      <form id="editorRecordForm">
-        <div id="editorRecordFields" class="editor-record-fields"></div>
-        <div class="storage-modal-actions editor-modal-actions">
-          <button id="editorDeleteRecord" type="button" class="btn danger">Eliminar registro</button>
-          <span class="modal-spacer"></span>
-          <button id="editorRecordCancel" type="button" class="btn ghost">Cancelar</button>
-          <button type="submit" class="btn primary">Guardar cambios</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div id="editorFieldModal" class="storage-modal" hidden>
-    <div class="storage-modal-card editor-field-card">
-      <div class="modal-head">
-        <div>
-          <span class="section-kicker">CAMPOS</span>
-          <h3 id="editorFieldTitle">Agregar campo</h3>
-        </div>
-        <button id="editorFieldClose" type="button" class="modal-x" aria-label="Cerrar">×</button>
-      </div>
-      <form id="editorFieldForm" class="source-form">
-        <input id="editorFieldId" type="hidden" />
-        <label class="field">
-          <span>Nombre visible</span>
-          <input id="editorFieldLabel" type="text" required placeholder="Ej. Modalidad" />
-        </label>
-        <label class="field">
-          <span>Clave interna</span>
-          <input id="editorFieldKey" type="text" placeholder="Se genera automáticamente" />
-        </label>
-        <label class="field">
-          <span>Base</span>
-          <select id="editorFieldDataset">
-            <option value="registrations">Personas / inscripciones</option>
-            <option value="attendance">Asistencias</option>
-            <option value="bajas">Bajas</option>
-            <option value="tutors">Tutores / capacitadores</option>
-            <option value="proposals">Comisiones / propuestas</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Alcance</span>
-          <select id="editorFieldScope">
-            <option value="action">Sólo esta acción</option>
-            <option value="global">Todas las acciones</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Tipo</span>
-          <select id="editorFieldType">
-            <option value="text">Texto</option>
-            <option value="number">Número</option>
-            <option value="date">Fecha</option>
-            <option value="boolean">Sí / No</option>
-            <option value="select">Desplegable</option>
-            <option value="textarea">Texto largo</option>
-          </select>
-        </label>
-        <label id="editorFieldOptionsWrap" class="field full" hidden>
-          <span>Opciones del desplegable</span>
-          <textarea id="editorFieldOptions" rows="4" placeholder="Una opción por línea"></textarea>
-        </label>
-        <div class="storage-modal-actions full">
-          <button id="editorFieldCancel" type="button" class="btn ghost">Cancelar</button>
-          <button type="submit" class="btn primary">Guardar campo</button>
-        </div>
-      </form>
-    </div>
-  </div>
 
   <div id="storageModal" class="storage-modal" hidden>
     <div class="storage-modal-card">

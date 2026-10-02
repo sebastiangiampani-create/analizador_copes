@@ -384,3 +384,25 @@ tbody tr:hover{background:#f7faf9}
   body.report-printing .report-output-filters{font-size:7pt!important}
   body.report-printing .report-empty-state{display:none!important}
 }
+
+.report-mini-add{
+  appearance:none;
+  position:absolute;
+  top:8px;
+  right:8px;
+  border:1px solid var(--line);
+  border-radius:7px;
+  background:rgba(255,255,255,.94);
+  padding:4px 6px;
+  font-size:7.5px;
+  font-weight:850;
+  color:var(--ink);
+  cursor:pointer;
+  opacity:0;
+  transition:opacity .15s ease,border-color .15s ease,background .15s ease;
+}
+.kpi,.insight-strip article{position:relative}
+.kpi:hover .report-mini-add,.insight-strip article:hover .report-mini-add,.report-mini-add:focus{opacity:1}
+.report-mini-add:hover{border-color:#9fbab4;background:#f7fbfa}
+@media(max-width:760px){.report-mini-add{opacity:1}}
+@media print{.report-mini-add,.chart-card-tools{display:none!important}}

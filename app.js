@@ -14,6 +14,60 @@
   const PALETTE = ['#167566','#2f7fe0','#7b68c7','#d18a3a','#3aa7a0','#7d8c99','#bd6a5a','#5d9b63','#8a6bb8','#c49a3f'];
   let filtered = { registrations: [], attendance: [], bajas: [], proposals: [] };
 
+  const CHART_PREF_KEY='analisis_acciones_chart_types_v1';
+  const REPORT_DRAFT_KEY='analisis_acciones_report_draft_v1';
+  const CHART_TYPE_LABELS={
+    bar:'Barras verticales',
+    hbar:'Barras horizontales',
+    line:'Líneas',
+    doughnut:'Torta anillo',
+    pie:'Torta',
+    polarArea:'Área polar',
+    radar:'Radar'
+  };
+  const CHART_META={
+    attendanceChart:{title:'Presentismo por fecha',defaultType:'line',allowed:['line','bar']},
+    presentismPercentChart:{title:'% de presentismo por fecha',defaultType:'bar',allowed:['bar','line']},
+    areaCompareChart:{title:'Inscriptos vs asistentes por área',defaultType:'hbar',allowed:['bar','hbar','line','radar']},
+    areaChart:{title:'Docentes por área',defaultType:'hbar',allowed:['bar','hbar','doughnut','pie','polarArea','radar']},
+    dependencyChart:{title:'Por dependencia',defaultType:'hbar',allowed:['bar','hbar','doughnut','pie','polarArea']},
+    commissionChart:{title:'Comisiones',defaultType:'bar',allowed:['bar','hbar','line','radar']},
+    schoolChart:{title:'Escuelas',defaultType:'hbar',allowed:['bar','hbar','doughnut','pie','polarArea']},
+    venueChart:{title:'Sedes',defaultType:'hbar',allowed:['bar','hbar','doughnut','pie','polarArea']},
+    tutorChart:{title:'Tutores / capacitadores',defaultType:'hbar',allowed:['bar','hbar','doughnut','pie','polarArea']},
+    cargoChart:{title:'Docentes por cargo',defaultType:'hbar',allowed:['bar','hbar','doughnut','pie','polarArea','radar']},
+    shiftChart:{title:'Turnos',defaultType:'doughnut',allowed:['bar','hbar','doughnut','pie','polarArea']}
+  };
+  const KPI_META={
+    kpiRegistered:'Docentes inscriptos',
+    kpiAttendees:'Docentes asistentes',
+    kpiRate:'Asistencia',
+    kpiPresentism:'Presentismo',
+    kpiSchools:'Escuelas representadas',
+    kpiParticipatingSchools:'Escuelas participantes',
+    kpiCommissions:'Comisiones',
+    kpiAttendanceRows:'Registros de asistencia',
+    insightNoShow:'Inscriptos sin asistencia',
+    insightSchoolsNoShow:'Escuelas sin asistencia',
+    insightBajas:'Bajas cruzadas'
+  };
+  const TABLE_META={
+    schoolTable:'Escuelas con participación',
+    absentTable:'Inscriptos sin asistencia',
+    bajasTable:'Bajas'
+  };
+
+  function readLocalJson(key,fallback){
+    try{return JSON.parse(localStorage.getItem(key)||'null')||fallback}catch{return fallback}
+  }
+  let chartPrefs=readLocalJson(CHART_PREF_KEY,{});
+  let reportDraft={title:'Informe de acciones formativas',subtitle:'',notes:'',includeFilters:true,items:[],...readLocalJson(REPORT_DRAFT_KEY,{})};
+  if(!Array.isArray(reportDraft.items))reportDraft.items=[];
+
+  function saveChartPrefs(){localStorage.setItem(CHART_PREF_KEY,JSON.stringify(chartPrefs))}
+  function saveReportDraft(){localStorage.setItem(REPORT_DRAFT_KEY,JSON.stringify(reportDraft))}
+
+
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => [...document.querySelectorAll(s)];
   const esc = (v='') => String(v ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
@@ -1782,32 +1836,235 @@
     try{
       if(charts[id])charts[id].destroy();
       const ctx=document.getElementById(id); if(!ctx)return;
+      const meta=CHART_META[id]||{};
+      const selected=chartPrefs[id]||meta.defaultType||type;
+      const actualType=selected==='hbar'?'bar':selected;
+      const radial=['doughnut','pie','polarArea'].includes(actualType);
+      const radar=actualType==='radar';
       const styled=datasets.map((d,i)=>{
-      if(type==='doughnut') return {...d,backgroundColor:labels.map((_,j)=>PALETTE[j%PALETTE.length]),borderWidth:0,hoverOffset:4};
-      if(type==='line') return {...d,borderColor:PALETTE[i%PALETTE.length],backgroundColor:'rgba(22,117,102,.08)',pointBackgroundColor:PALETTE[i%PALETTE.length],pointRadius:3,borderWidth:2.2};
-      return {...d,backgroundColor:PALETTE[i%PALETTE.length],borderRadius:6,borderSkipped:false,maxBarThickness:38};
-    });
-      charts[id]=new Chart(ctx,{
-        type,
-        data:{labels,datasets:styled},
-        options:{
-          responsive:true,
-          maintainAspectRatio:false,
-          interaction:{mode:'nearest',intersect:false},
-          plugins:{
-            legend:{position:'bottom',labels:{boxWidth:8,usePointStyle:true,padding:14,color:'#6d7983',font:{size:10,weight:600}}},
-            tooltip:{backgroundColor:'#10262b',titleColor:'#fff',bodyColor:'#dfe9e7',padding:10,cornerRadius:8}
-          },
-          scales:type==='doughnut'?{}:{
-            x:{grid:{display:false},ticks:{maxRotation:45,minRotation:0,color:'#7a8790',font:{size:9}}},
-            y:{beginAtZero:true,grid:{color:'#edf1f3'},ticks:{color:'#7a8790',font:{size:9}}}
-          },
-          ...extra
-        }
+        if(radial) return {...d,backgroundColor:labels.map((_,j)=>PALETTE[j%PALETTE.length]),borderWidth:0,hoverOffset:4};
+        if(radar) return {...d,borderColor:PALETTE[i%PALETTE.length],backgroundColor:'rgba(22,117,102,.08)',pointBackgroundColor:PALETTE[i%PALETTE.length],pointRadius:2,borderWidth:2,fill:true};
+        if(actualType==='line') return {...d,borderColor:PALETTE[i%PALETTE.length],backgroundColor:'rgba(22,117,102,.08)',pointBackgroundColor:PALETTE[i%PALETTE.length],pointRadius:3,borderWidth:2.2};
+        return {...d,backgroundColor:PALETTE[i%PALETTE.length],borderRadius:6,borderSkipped:false,maxBarThickness:38};
       });
+      const defaultScales={
+        x:{grid:{display:false},ticks:{maxRotation:45,minRotation:0,color:'#7a8790',font:{size:9}}},
+        y:{beginAtZero:true,grid:{color:'#edf1f3'},ticks:{color:'#7a8790',font:{size:9}}}
+      };
+      const options={
+        responsive:true,
+        maintainAspectRatio:false,
+        interaction:{mode:'nearest',intersect:false},
+        plugins:{
+          legend:{position:'bottom',labels:{boxWidth:8,usePointStyle:true,padding:14,color:'#6d7983',font:{size:10,weight:600}}},
+          tooltip:{backgroundColor:'#10262b',titleColor:'#fff',bodyColor:'#dfe9e7',padding:10,cornerRadius:8}
+        }
+      };
+      if(!radial&&!radar){
+        options.scales=extra.scales||defaultScales;
+        if(selected==='hbar')options.indexAxis='y';
+        else if(extra.indexAxis && !chartPrefs[id])options.indexAxis=extra.indexAxis;
+      }
+      for(const [k,v] of Object.entries(extra||{})){
+        if(k==='scales'||k==='indexAxis')continue;
+        options[k]=v;
+      }
+      charts[id]=new Chart(ctx,{type:actualType,data:{labels,datasets:styled},options});
+      const selector=document.querySelector('[data-chart-type="'+id+'"]');
+      if(selector && selector.value!==selected)selector.value=selected;
     }catch(e){
       console.error('Error renderizando gráfico '+id,e);
     }
+  }
+
+  function initChartControls(){
+    for(const [id,meta] of Object.entries(CHART_META)){
+      const canvas=document.getElementById(id);
+      const panel=canvas?.closest('.panel');
+      const head=panel?.querySelector('.panel-head');
+      if(!canvas||!panel||!head||head.querySelector('[data-chart-tools="'+id+'"]'))continue;
+      panel.dataset.reportKey='chart:'+id;
+      const tools=document.createElement('div');
+      tools.className='chart-card-tools';
+      tools.dataset.chartTools=id;
+      const select=document.createElement('select');
+      select.className='chart-type-select';
+      select.dataset.chartType=id;
+      select.title='Tipo de gráfico';
+      for(const value of meta.allowed){
+        const opt=document.createElement('option');
+        opt.value=value;opt.textContent=CHART_TYPE_LABELS[value]||value;
+        select.appendChild(opt);
+      }
+      select.value=chartPrefs[id]||meta.defaultType;
+      const add=document.createElement('button');
+      add.type='button';add.className='chart-tool-btn';add.dataset.addReport='chart:'+id;add.textContent='+ Informe';
+      const print=document.createElement('button');
+      print.type='button';print.className='chart-tool-btn';print.dataset.printChart=id;print.textContent='PDF';
+      tools.append(select,add,print);
+      head.appendChild(tools);
+    }
+  }
+
+  function setChartType(id,type){
+    const meta=CHART_META[id];if(!meta||!meta.allowed.includes(type))return;
+    chartPrefs[id]=type;saveChartPrefs();
+    applyFilters();
+    if($('#view-reports')?.classList.contains('active'))renderReportPreview();
+  }
+
+  function reportCatalog(){
+    return [
+      ...Object.entries(KPI_META).map(([id,title])=>({key:'kpi:'+id,kind:'Indicador',title})),
+      ...Object.entries(CHART_META).map(([id,meta])=>({key:'chart:'+id,kind:'Gráfico',title:meta.title})),
+      ...Object.entries(TABLE_META).map(([id,title])=>({key:'table:'+id,kind:'Tabla',title}))
+    ];
+  }
+
+  function reportItemMeta(key){
+    return reportCatalog().find(x=>x.key===key)||{key,kind:'Contenido',title:key};
+  }
+
+  function syncReportInputs(){
+    if(!$('#reportDocTitle'))return;
+    $('#reportDocTitle').value=reportDraft.title||'Informe de acciones formativas';
+    $('#reportDocSubtitle').value=reportDraft.subtitle||'';
+    $('#reportDocNotes').value=reportDraft.notes||'';
+    $('#reportIncludeFilters').checked=reportDraft.includeFilters!==false;
+  }
+
+  function captureReportInputs(){
+    if(!$('#reportDocTitle'))return;
+    reportDraft.title=$('#reportDocTitle').value.trim()||'Informe de acciones formativas';
+    reportDraft.subtitle=$('#reportDocSubtitle').value.trim();
+    reportDraft.notes=$('#reportDocNotes').value.trim();
+    reportDraft.includeFilters=$('#reportIncludeFilters').checked;
+    saveReportDraft();
+  }
+
+  function addReportItem(key,{quiet=false}={}){
+    if(!reportItemMeta(key)?.title)return;
+    if(!reportDraft.items.includes(key))reportDraft.items.push(key);
+    saveReportDraft();
+    renderReportBuilder();
+    if(!quiet)toast('Agregado al informe.');
+  }
+
+  function removeReportItem(key){
+    reportDraft.items=reportDraft.items.filter(x=>x!==key);
+    saveReportDraft();renderReportBuilder();
+  }
+
+  function moveReportItem(key,delta){
+    const i=reportDraft.items.indexOf(key);if(i<0)return;
+    const j=i+delta;if(j<0||j>=reportDraft.items.length)return;
+    [reportDraft.items[i],reportDraft.items[j]]=[reportDraft.items[j],reportDraft.items[i]];
+    saveReportDraft();renderReportBuilder();
+  }
+
+  function cleanClone(node){
+    const clone=node.cloneNode(true);
+    if(clone.removeAttribute)clone.removeAttribute('id');
+    clone.querySelectorAll?.('[id]').forEach(x=>x.removeAttribute('id'));
+    clone.querySelectorAll?.('button,select,input,textarea').forEach(x=>x.remove());
+    return clone;
+  }
+
+  function reportBlockHtml(key){
+    const meta=reportItemMeta(key);
+    const [kind,id]=key.split(':');
+    if(kind==='chart'){
+      const canvas=document.getElementById(id);
+      let image='';
+      try{image=canvas?.toDataURL('image/png',1)||''}catch{}
+      return '<section class="report-output-block report-chart-block"><h2>'+esc(meta.title)+'</h2>'+
+        (image?'<img src="'+image+'" alt="'+esc(meta.title)+'" />':'<div class="empty">Gráfico sin datos para los filtros actuales.</div>')+
+        '</section>';
+    }
+    if(kind==='kpi'){
+      const value=document.getElementById(id)?.textContent?.trim()||'—';
+      return '<section class="report-output-block report-kpi-block"><span>'+esc(meta.title)+'</span><strong>'+esc(value)+'</strong></section>';
+    }
+    if(kind==='table'){
+      const tbody=document.getElementById(id);
+      const table=tbody?.closest('table');
+      return '<section class="report-output-block report-table-block"><h2>'+esc(meta.title)+'</h2>'+
+        (table?cleanClone(table).outerHTML:'<div class="empty">Sin datos.</div>')+'</section>';
+    }
+    return '';
+  }
+
+  function reportHeaderHtml({title,subtitle,notes,includeFilters}){
+    const filters=includeFilters?filterSummaryPairs():[];
+    return '<header class="report-output-header">'+
+      '<div class="report-output-eyebrow">ANÁLISIS DE ACCIONES</div>'+
+      '<h1>'+esc(title||'Informe de acciones formativas')+'</h1>'+
+      (subtitle?'<p class="report-output-subtitle">'+esc(subtitle)+'</p>':'')+
+      '<div class="report-output-date">Generado: '+esc(new Date().toLocaleString('es-AR'))+'</div>'+
+      (notes?'<p class="report-output-notes">'+esc(notes)+'</p>':'')+
+      (filters.length?'<div class="report-output-filters">'+filters.map(([k,v])=>'<span><b>'+esc(k)+':</b> '+esc(v)+'</span>').join('')+'</div>':'')+
+      '</header>';
+  }
+
+  function reportDocumentHtml(items=reportDraft.items,overrides={}){
+    const cfg={
+      title:overrides.title??reportDraft.title,
+      subtitle:overrides.subtitle??reportDraft.subtitle,
+      notes:overrides.notes??reportDraft.notes,
+      includeFilters:overrides.includeFilters??reportDraft.includeFilters
+    };
+    const blocks=items.map(reportBlockHtml).filter(Boolean).join('');
+    return reportHeaderHtml(cfg)+(blocks||'<div class="report-empty-state">Agregá indicadores, gráficos o tablas para construir el informe.</div>');
+  }
+
+  function renderReportBuilder(){
+    const catalogHost=$('#reportCatalog'),selectedHost=$('#reportSelectedItems');
+    if(!catalogHost||!selectedHost)return;
+    syncReportInputs();
+    const catalog=reportCatalog();
+    const groups=['Indicador','Gráfico','Tabla'];
+    catalogHost.innerHTML=groups.map(group=>{
+      const items=catalog.filter(x=>x.kind===group);
+      return '<div class="report-catalog-group"><h4>'+group+'s</h4>'+
+        items.map(x=>'<button type="button" class="report-catalog-item '+(reportDraft.items.includes(x.key)?'selected':'')+'" data-add-report="'+esc(x.key)+'">'+
+          '<span>'+esc(x.title)+'</span><b>'+(reportDraft.items.includes(x.key)?'Agregado':'Agregar')+'</b></button>').join('')+
+        '</div>';
+    }).join('');
+    selectedHost.innerHTML=reportDraft.items.map((key,i)=>{
+      const meta=reportItemMeta(key);
+      return '<div class="report-selected-item" data-report-item="'+esc(key)+'"><div><span>'+(i+1)+'</span><strong>'+esc(meta.title)+'</strong><small>'+esc(meta.kind)+'</small></div>'+
+        '<div class="report-order-actions">'+
+        '<button type="button" data-report-move="'+esc(key)+'" data-delta="-1" '+(i===0?'disabled':'')+'>↑</button>'+
+        '<button type="button" data-report-move="'+esc(key)+'" data-delta="1" '+(i===reportDraft.items.length-1?'disabled':'')+'>↓</button>'+
+        '<button type="button" data-report-remove="'+esc(key)+'">×</button></div></div>';
+    }).join('')||'<div class="report-empty-state">Todavía no agregaste contenido. Podés hacerlo desde el tablero o desde la lista de la izquierda.</div>';
+  }
+
+  function renderReportPreview(){
+    captureReportInputs();
+    const root=$('#reportPreviewRoot');if(!root)return;
+    root.innerHTML=reportDocumentHtml();
+  }
+
+  function printReport(items=reportDraft.items,overrides={}){
+    if(!items?.length){toast('Agregá al menos un elemento al informe.');return}
+    captureReportInputs();
+    const root=$('#reportPrintRoot');if(!root)return;
+    root.innerHTML=reportDocumentHtml(items,overrides);
+    root.setAttribute('aria-hidden','false');
+    document.body.classList.add('report-printing');
+    const cleanup=()=>{
+      document.body.classList.remove('report-printing');
+      root.setAttribute('aria-hidden','true');
+      window.removeEventListener('afterprint',cleanup);
+    };
+    window.addEventListener('afterprint',cleanup);
+    requestAnimationFrame(()=>setTimeout(()=>window.print(),120));
+  }
+
+  function printSingleChart(id){
+    const meta=CHART_META[id];if(!meta)return;
+    printReport(['chart:'+id],{title:meta.title,subtitle:'Gráfico de acciones formativas',notes:'',includeFilters:true});
   }
 
   function renderDetail(){
@@ -2522,11 +2779,13 @@
 
   function renderAll(){
     refreshFilterOptions(); renderImportResults(); renderSources(); applyFilters(); renderEditor();
+    initChartControls(); renderReportBuilder();
   }
 
   function switchView(name){
-    $$('.view').forEach(x=>x.classList.remove('active')); $$('.nav-item').forEach(x=>x.classList.remove('active'));
+    $('.view').forEach(x=>x.classList.remove('active')); $('.nav-item').forEach(x=>x.classList.remove('active'));
     $('#view-'+name)?.classList.add('active'); document.querySelector(`.nav-item[data-view="${name}"]`)?.classList.add('active');
+    if(name==='reports'){renderReportBuilder();requestAnimationFrame(()=>renderReportPreview())}
   }
 
   function exportFileStem(){
@@ -2775,9 +3034,9 @@
 
   function printDashboard(){
     if(!filtered.registrations.length && !filtered.attendance.length)return;
-    updatePrintMeta();
-    switchView('dashboard');
-    requestAnimationFrame(()=>setTimeout(()=>window.print(),100));
+    switchView('reports');
+    renderReportBuilder();
+    renderReportPreview();
   }
 
   function exportCsv(){
@@ -2853,6 +3112,31 @@
       $('#globalSearch').value='';$('#savedFilterSelect').value='';$('#deleteFilterBtn').disabled=true;renderSavedFilters();applyFilters();
     });
     $('#printBtn').addEventListener('click',printDashboard);
+    document.addEventListener('change',e=>{
+      const select=e.target.closest?.('[data-chart-type]');
+      if(select)setChartType(select.dataset.chartType,select.value);
+    });
+    document.addEventListener('click',e=>{
+      const add=e.target.closest?.('[data-add-report]');
+      if(add){addReportItem(add.dataset.addReport);return}
+      const print=e.target.closest?.('[data-print-chart]');
+      if(print){printSingleChart(print.dataset.printChart);return}
+      const remove=e.target.closest?.('[data-report-remove]');
+      if(remove){removeReportItem(remove.dataset.reportRemove);return}
+      const move=e.target.closest?.('[data-report-move]');
+      if(move){moveReportItem(move.dataset.reportMove,Number(move.dataset.delta));return}
+    });
+    ['reportDocTitle','reportDocSubtitle','reportDocNotes'].forEach(id=>$('#'+id)?.addEventListener('input',()=>{captureReportInputs()}));
+    $('#reportIncludeFilters')?.addEventListener('change',()=>{captureReportInputs();renderReportPreview()});
+    $('#reportAddAllCharts')?.addEventListener('click',()=>{
+      Object.keys(CHART_META).forEach(id=>addReportItem('chart:'+id,{quiet:true}));
+      renderReportBuilder();renderReportPreview();toast('Todos los gráficos fueron agregados.');
+    });
+    $('#reportClear')?.addEventListener('click',()=>{
+      reportDraft.items=[];saveReportDraft();renderReportBuilder();renderReportPreview();
+    });
+    $('#reportPreview')?.addEventListener('click',renderReportPreview);
+    $('#reportPrint')?.addEventListener('click',()=>printReport());
     $('#excelBtn').addEventListener('click',exportExcel);
     $('#exportBtn').addEventListener('click',exportCsv);
     window.addEventListener('beforeprint',updatePrintMeta);

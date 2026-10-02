@@ -2838,8 +2838,8 @@
   }
 
   function switchView(name){
-    $('.view').forEach(x=>x.classList.remove('active'));
-    $('.nav-item').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
     $('#view-'+name)?.classList.add('active');
     document.querySelector(`.nav-item[data-view="${name}"]`)?.classList.add('active');
     if(name==='reports'){

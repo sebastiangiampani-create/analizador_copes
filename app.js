@@ -62,6 +62,19 @@
   }
   let chartPrefs=readLocalJson(CHART_PREF_KEY,{});
   let reportDraft={title:'Informe de acciones formativas',subtitle:'',notes:'',includeFilters:true,items:[],...readLocalJson(REPORT_DRAFT_KEY,{})};
+  const MULTI_FILTER_DEFS={
+    filterSchool:{label:'ESCUELA'},
+    filterDependency:{label:'DEPENDENCIA'},
+    filterSector:{label:'SECTOR DE GESTIÓN'},
+    filterComuna:{label:'COMUNA'},
+    filterStatus:{label:'ESTADO'},
+    filterTutor:{label:'Tutor / capacitador'},
+    filterArea:{label:'Área'},
+    filterVenue:{label:'Sede'},
+    filterShift:{label:'Turno'},
+    filterCargo:{label:'Cargo'}
+  };
+  const multiFilterState={};
   if(!Array.isArray(reportDraft.items))reportDraft.items=[];
 
   function saveChartPrefs(){
@@ -151,8 +164,8 @@
     if(!Array.isArray(dataset.bajas)) dataset.bajas=[];
     if(!Array.isArray(dataset.tutors)) dataset.tutors=[];
     if(!Array.isArray(dataset.sources)) dataset.sources=[];
-    if(!Array.isArray(dataset.savedFilters)) dataset.savedFilters=[];
-    if(!Array.isArray(dataset.customFields)) dataset.customFields=[];
+    dataset.savedFilters=[];
+    dataset.customFields=[];
     if(!dataset.masters || typeof dataset.masters!=='object') dataset.masters={schools:[],areas:[],cargos:[]};
     if(!Array.isArray(dataset.masters.schools)) dataset.masters.schools=[];
     if(!Array.isArray(dataset.masters.areas)) dataset.masters.areas=[];
@@ -370,8 +383,8 @@
     if(!remoteReady)return;
     await remoteRequest('save_config',{payload:{
       sources:dataset.sources||[],
-      savedFilters:dataset.savedFilters||[],
-      customFields:dataset.customFields||[],
+      savedFilters:[],
+      customFields:[],
       chartPrefs,
       reportDraft
     }});
@@ -406,8 +419,6 @@
   async function initRemotePersistenceCore(){
     const localSnapshots=(dataset.actions||[]).map(a=>buildActionSnapshot(a.code)).filter(Boolean);
     const localSources=structuredClone(dataset.sources||[]);
-    const localFilters=structuredClone(dataset.savedFilters||[]);
-    const localFields=structuredClone(dataset.customFields||[]);
 
     const connected=await ensureRemoteAccess({interactive:true});
     if(!connected){
@@ -434,14 +445,12 @@
         }
       }
 
-      if(localSources.length || localFilters.length || localFields.length){
+      {
         const mergedSources=Array.isArray(remote.config?.sources)&&remote.config.sources.length ? remote.config.sources : localSources;
-        const mergedFilters=Array.isArray(remote.config?.savedFilters)&&remote.config.savedFilters.length ? remote.config.savedFilters : localFilters;
-        const mergedFields=Array.isArray(remote.config?.customFields)&&remote.config.customFields.length ? remote.config.customFields : localFields;
         await remoteRequest('save_config',{payload:{
           sources:mergedSources,
-          savedFilters:mergedFilters,
-          customFields:mergedFields,
+          savedFilters:[],
+          customFields:[],
           chartPrefs:(remote.config?.chartPrefs && typeof remote.config.chartPrefs==='object')?remote.config.chartPrefs:chartPrefs,
           reportDraft:(remote.config?.reportDraft && typeof remote.config.reportDraft==='object')?remote.config.reportDraft:reportDraft
         }});
@@ -452,8 +461,8 @@
       const actionIndex=remote.actions||[];
       dataset=structuredClone(EMPTY);
       dataset.sources=Array.isArray(remote.config?.sources)?remote.config.sources:[];
-      dataset.savedFilters=Array.isArray(remote.config?.savedFilters)?remote.config.savedFilters:[];
-      dataset.customFields=Array.isArray(remote.config?.customFields)?remote.config.customFields:[];
+      dataset.savedFilters=[];
+      dataset.customFields=[];
       if(remote.config?.chartPrefs && typeof remote.config.chartPrefs==='object'){
         chartPrefs={...chartPrefs,...remote.config.chartPrefs};
         saveChartPrefs();
@@ -481,7 +490,6 @@
       }
 
       applyMasterDataToDataset({onlyMissing:true});
-      applyAllEditorLayers();
 
       await saveState();
       const onlineCount=actionIndex.length;
@@ -922,18 +930,21 @@
     for(const [k,v] of byActionDate)byActionDate.set(k,unique(v));
 
     dataset.registrations=(dataset.registrations||[]).map(r=>{
+      if(String(r.tutor||'').trim())return r;
       const names=byAction.get(r.actionCode)||[];
       return names.length?{...r,tutor:names.join(' · ')}:r;
     });
     dataset.attendance=(dataset.attendance||[]).map(r=>{
+      if(String(r.tutor||'').trim())return r;
       const exact=byActionDate.get(r.actionCode+'|'+(r.eventDate||''))||[];
       const fallback=byAction.get(r.actionCode)||[];
       const names=exact.length?exact:fallback;
       return names.length?{...r,tutor:names.join(' · ')}:r;
     });
     dataset.proposals=(dataset.proposals||[]).map(p=>{
+      if((p.tutors||[]).length)return p;
       const names=byAction.get(p.actionCode)||[];
-      return names.length?{...p,tutors:unique([...(p.tutors||[]),...names])}:p;
+      return names.length?{...p,tutors:unique(names)}:p;
     });
   }
 
@@ -982,7 +993,6 @@
     }
     applyTutorsToDataset();
     applyMasterDataToDataset();
-    codes.forEach(applyEditorLayer);
     return codes;
   }
 
@@ -1065,10 +1075,10 @@
         areaClass:classifyArea(pickExact(raw,['Área','Area'])||pick(m,['Área','Area'])||''),
         formation:String(pick(m,['Formación','Formacion'])||'').trim(),
         venue:String(pick(m,['Sede'])||'').trim(),
-        shift:String(pick(m,['Turno','Horario'])||'').trim(),
+        shift:String(pickExact(raw,['TURNO','Turno'])||pick(m,['Turno'])||'').trim(),
         capacity:num(pick(m,['Cupo'])),
         registeredReported:num(pick(m,['# Inscr.','# Inscr'])),
-        tutors:splitTutors(pick(m,['Capacitador','Tutor','Capacitadores'])),
+        tutors:splitTutors(pickExact(raw,['TUTOR','Tutor','CAPACITADOR','Capacitador'])||pick(m,['Tutor','Capacitador','Capacitadores'])),
         meetings:meetingCols
       };
     }).filter(r=>r.code);
@@ -1108,8 +1118,8 @@
         cargo:String(pickExact(raw,['Cargo','CARGO','Cargo docente'])||pick(m,['Cargo','Cargo docente'])||'').trim(),
         formation:String(pick(m,['Formación','Formacion','Tipo de Formación'])||p?.formation||'').trim(),
         venue:String(pick(m,['Sede'])||p?.venue||'').trim(),
-        shift:String(pick(m,['Turno'])||p?.shift||'').trim(),
-        tutor:(p?.tutors||[]).join(' · '),
+        shift:String(pickExact(raw,['TURNO','Turno'])||pick(m,['Turno'])||p?.shift||'').trim(),
+        tutor:String(pickExact(raw,['TUTOR','Tutor','CAPACITADOR','Capacitador'])||pick(m,['Tutor','Capacitador'])||(p?.tutors||[]).join(' · ')||'').trim(),
         registrationDate:isoDate(pick(m,['FECHA','Fecha','Fecha y hora']),year),
         source:file.name
       };
@@ -1154,8 +1164,8 @@
         cargo:String(pickExact(raw,['Cargo','CARGO','Cargo docente'])||pick(m,['Cargo','Cargo docente'])||'').trim(),
         formation:String(pick(m,['Formación','Formacion','Tipo de Formación'])||p?.formation||'').trim(),
         venue:String(pick(m,['Sede'])||p?.venue||'').trim(),
-        shift:String(pick(m,['Turno'])||p?.shift||'').trim(),
-        tutor:(p?.tutors||[]).join(' · '),
+        shift:String(pickExact(raw,['TURNO','Turno'])||pick(m,['Turno'])||p?.shift||'').trim(),
+        tutor:String(pickExact(raw,['TUTOR','Tutor','CAPACITADOR','Capacitador'])||pick(m,['Tutor','Capacitador'])||(p?.tutors||[]).join(' · ')||'').trim(),
         encounter:encounter || (p?.meetings?.[0]?.label || ''),
         eventDate,
         capturedAt:isoDate(pick(m,['FECHA','Fecha','Fecha y hora']),year),
@@ -1203,8 +1213,9 @@
         if(!byDate.has(t.date))byDate.set(t.date,[]);
         byDate.get(t.date).push(t.name);
       });
-      registrations.forEach(r=>{ if(actionTutorNames.length)r.tutor=actionTutorNames.join(' · ') });
+      registrations.forEach(r=>{ if(actionTutorNames.length&&!String(r.tutor||'').trim())r.tutor=actionTutorNames.join(' · ') });
       attendance.forEach(r=>{
+        if(String(r.tutor||'').trim())return;
         const names=unique(byDate.get(r.eventDate)||actionTutorNames);
         if(names.length)r.tutor=names.join(' · ');
       });
@@ -1262,7 +1273,6 @@
     }
     applyTutorsToDataset();
     applyMasterDataToDataset();
-    applyEditorLayer(code);
     const existedImport=dataset.imports.some(x=>x.code===code);
     const previousImport=dataset.imports.find(x=>x.code===code);
     const mergedImport=p.importInfo?.bajasOnly&&previousImport
@@ -1449,44 +1459,125 @@
     return normalize(value||'').includes(f);
   }
 
+  function ensureCargoFilterPlaceholder(){
+    if($('#filterCargo'))return;
+    const shift=$('#filterShift')?.closest('label');
+    if(!shift)return;
+    const label=document.createElement('label');
+    label.innerHTML='Cargo<input id="filterCargo" list="filterCargoList" type="text" autocomplete="off" placeholder="Escribí o elegí..." /><datalist id="filterCargoList"></datalist>';
+    shift.insertAdjacentElement('afterend',label);
+  }
+
+  function initMultiFilterWidgets(){
+    ensureCargoFilterPlaceholder();
+    for(const [id,def] of Object.entries(MULTI_FILTER_DEFS)){
+      const input=$('#'+id);
+      if(!input || document.querySelector('[data-multi-filter="'+id+'"]'))continue;
+      const oldLabel=input.closest('label');
+      if(!oldLabel)continue;
+      const wrap=document.createElement('div');
+      wrap.className='multi-filter-field';
+      wrap.innerHTML='<span class="multi-filter-caption">'+esc(def.label)+'</span>'+
+        '<details class="multi-filter" data-multi-filter="'+id+'">'+
+          '<summary><span class="multi-filter-summary">Todas</span><b>⌄</b></summary>'+
+          '<div class="multi-filter-popover">'+
+            '<input type="search" class="multi-filter-search" placeholder="Buscar opción..." />'+
+            '<div class="multi-filter-actions">'+
+              '<button type="button" data-multi-all>Seleccionar todo</button>'+
+              '<button type="button" data-multi-clear>Limpiar</button>'+
+            '</div>'+
+            '<div class="multi-filter-options"></div>'+
+          '</div>'+
+        '</details>';
+      oldLabel.replaceWith(wrap);
+      multiFilterState[id]=new Set();
+    }
+  }
+
+  function multiFilterValues(id){
+    return [...(multiFilterState[id]||new Set())];
+  }
+
+  function multiFilterMatch(value,selected){
+    if(!selected?.length)return true;
+    return selected.some(x=>textMatch(value,x));
+  }
+
+  function updateMultiFilterSummary(id){
+    const details=document.querySelector('[data-multi-filter="'+id+'"]');
+    if(!details)return;
+    const selected=multiFilterValues(id);
+    const total=details.querySelectorAll('.multi-filter-options input[type="checkbox"]').length;
+    const summary=details.querySelector('.multi-filter-summary');
+    if(!summary)return;
+    if(!selected.length)summary.textContent='Todas';
+    else if(total && selected.length===total)summary.textContent='Todas ('+total+')';
+    else if(selected.length===1)summary.textContent=selected[0];
+    else summary.textContent=selected.length+' seleccionadas';
+  }
+
+  function setMultiFilterOptions(id,values){
+    const details=document.querySelector('[data-multi-filter="'+id+'"]');
+    if(!details)return;
+    const options=sortAlpha(unique(values));
+    const previous=multiFilterState[id]||new Set();
+    const valid=new Set(options);
+    multiFilterState[id]=new Set([...previous].filter(x=>valid.has(x)));
+    const host=details.querySelector('.multi-filter-options');
+    host.innerHTML=options.map((value,i)=>{
+      const checked=multiFilterState[id].has(value)?' checked':'';
+      return '<label class="multi-filter-option"><input type="checkbox" value="'+esc(value)+'"'+checked+' /><span>'+esc(value)+'</span></label>';
+    }).join('') || '<div class="multi-filter-empty">Sin opciones</div>';
+    updateMultiFilterSummary(id);
+  }
+
+  function clearAllMultiFilters(){
+    for(const id of Object.keys(MULTI_FILTER_DEFS)){
+      multiFilterState[id]=new Set();
+      const details=document.querySelector('[data-multi-filter="'+id+'"]');
+      details?.querySelectorAll('input[type="checkbox"]').forEach(x=>x.checked=false);
+      updateMultiFilterSummary(id);
+    }
+  }
+
   function currentFilters(){
-    const action=$('#filterAction').value.trim();
-    const exactAction=/^C\d{4}$/.test(action.toUpperCase()) && dataset.actions.some(x=>x.code===action.toUpperCase());
+    const action=$('#filterAction')?.value.trim()||'';
     return {
       action,
-      school:$('#filterSchool').value,
-      dependency:$('#filterDependency').value,
-      sector:$('#filterSector').value,
-      comuna:$('#filterComuna').value,
-      status:$('#filterStatus').value,
+      schools:multiFilterValues('filterSchool'),
+      dependencies:multiFilterValues('filterDependency'),
+      sectors:multiFilterValues('filterSector'),
+      comunas:multiFilterValues('filterComuna'),
+      statuses:multiFilterValues('filterStatus'),
       dates:unique([
         ...selectedValues($('#filterDate')),
         ...splitManualList($('#filterDateManual').value).map(normalizeManualDate).filter(Boolean)
       ]).sort(),
-      tutor:$('#filterTutor').value,
-      area:$('#filterArea').value,
-      venue:$('#filterVenue').value,
-      shift:$('#filterShift').value,
-      excludeSurnames:exactAction?splitManualList($('#excludeSurname').value).map(normalize):[],
-      excludeDates:exactAction?splitManualList($('#excludeDate').value).map(normalizeManualDate).filter(Boolean):[],
+      tutors:multiFilterValues('filterTutor'),
+      areas:multiFilterValues('filterArea'),
+      venues:multiFilterValues('filterVenue'),
+      shifts:multiFilterValues('filterShift'),
+      cargos:multiFilterValues('filterCargo'),
+      excludeSurnames:[],
+      excludeDates:[],
       q:normalize($('#globalSearch').value)
     };
   }
   function rowDate(r){ return r.eventDate || r.registrationDate || r.capturedAt || ''; }
   function matchesBase(r,f){
     if(f.action && !textMatch(r.actionCode,f.action))return false;
-    if(f.school && !textMatch(r.school,f.school))return false;
-    if(f.dependency && !textMatch(r.dependency,f.dependency))return false;
-    if(f.sector && !textMatch(r.sector,f.sector))return false;
-    if(f.comuna && !textMatch(r.comuna,f.comuna))return false;
-    if(f.status && !textMatch(statusNorm(r.status),f.status))return false;
-    if((f.excludeSurnames||[]).some(x=>normalize(surnameOf(r)).includes(x)))return false;
-    if(f.tutor && !textMatch(r.tutor,f.tutor))return false;
-    if(f.area && !textMatch(r.area,f.area))return false;
-    if(f.venue && !textMatch(r.venue,f.venue))return false;
-    if(f.shift && !textMatch(r.shift,f.shift))return false;
+    if(!multiFilterMatch(r.school,f.schools))return false;
+    if(!multiFilterMatch(r.dependency,f.dependencies))return false;
+    if(!multiFilterMatch(r.sector,f.sectors))return false;
+    if(!multiFilterMatch(r.comuna,f.comunas))return false;
+    if(!multiFilterMatch(statusNorm(r.status),f.statuses))return false;
+    if(!multiFilterMatch(r.tutor,f.tutors))return false;
+    if(!multiFilterMatch(r.area,f.areas))return false;
+    if(!multiFilterMatch(r.venue,f.venues))return false;
+    if(!multiFilterMatch(r.shift,f.shifts))return false;
+    if(!multiFilterMatch(r.cargoClass||r.cargo,f.cargos))return false;
     if(f.q){
-      const hay=normalize([r.dni,r.name,r.email,r.school,r.cue,r.dependency,r.sector,r.comuna,r.status,rowDate(r),r.region,r.area,r.commissionCode,r.tutor,r.venue].join(' '));
+      const hay=normalize([r.dni,r.name,r.email,r.school,r.cue,r.dependency,r.sector,r.comuna,r.status,rowDate(r),r.region,r.area,r.cargo,r.cargoClass,r.commissionCode,r.tutor,r.venue,r.shift].join(' '));
       if(!hay.includes(f.q))return false;
     }
     return true;
@@ -1538,22 +1629,19 @@
 
     const regs=exactAction ? dataset.registrations.filter(x=>x.actionCode===exactAction) : dataset.registrations;
     const props=exactAction ? dataset.proposals.filter(x=>x.actionCode===exactAction) : dataset.proposals;
-    fillDatalist('filterSchoolList',regs.map(x=>x.school));
-    fillDatalist('filterDependencyList',regs.map(x=>x.dependency));
-    fillDatalist('filterSectorList',regs.map(x=>x.sector));
-    fillDatalist('filterComunaList',regs.map(x=>x.comuna));
-    fillDatalist('filterStatusList',regs.map(x=>statusNorm(x.status)).filter(Boolean));
-    fillDatalist('filterTutorList',props.flatMap(x=>x.tutors||[]));
-    fillDatalist('filterAreaList',regs.map(x=>x.area).concat(props.map(x=>x.area)));
-    fillDatalist('filterVenueList',regs.map(x=>x.venue).concat(props.map(x=>x.venue)));
-    fillDatalist('filterShiftList',regs.map(x=>x.shift).concat(props.map(x=>x.shift)));
-    fillDatalist('excludeSurnameList',regs.map(surnameOf).filter(Boolean));
+    setMultiFilterOptions('filterSchool',regs.map(x=>x.school));
+    setMultiFilterOptions('filterDependency',regs.map(x=>x.dependency));
+    setMultiFilterOptions('filterSector',regs.map(x=>x.sector));
+    setMultiFilterOptions('filterComuna',regs.map(x=>x.comuna));
+    setMultiFilterOptions('filterStatus',regs.map(x=>statusNorm(x.status)).filter(Boolean));
+    setMultiFilterOptions('filterTutor',regs.map(x=>x.tutor).concat(props.flatMap(x=>x.tutors||[])));
+    setMultiFilterOptions('filterArea',regs.map(x=>x.area).concat(props.map(x=>x.area)));
+    setMultiFilterOptions('filterVenue',regs.map(x=>x.venue).concat(props.map(x=>x.venue)));
+    setMultiFilterOptions('filterShift',regs.map(x=>x.shift).concat(props.map(x=>x.shift)));
+    setMultiFilterOptions('filterCargo',regs.map(x=>x.cargoClass||x.cargo));
     const atts=exactAction ? dataset.attendance.filter(x=>x.actionCode===exactAction) : dataset.attendance;
     fillMultiSelect($('#filterDate'),atts.map(x=>x.eventDate).filter(Boolean),formatDate);
-    fillDatalist('excludeDateList',atts.map(x=>x.eventDate).filter(Boolean),formatDate);
-    renderSavedFilters();
   }
-
   function selectedAction(){
     const code=$('#filterAction')?.value||'';
     return code?dataset.actions.find(x=>x.code===code):null;
@@ -1633,14 +1721,15 @@
 
     filtered.proposals=dataset.proposals.filter(p=>{
       if(f.action && !textMatch(p.actionCode,f.action))return false;
-      if(f.tutor && !(p.tutors||[]).some(x=>textMatch(x,f.tutor)))return false;
-      if(f.area && !textMatch(p.area,f.area))return false;
-      if(f.venue && !textMatch(p.venue,f.venue))return false;
-      if(f.shift && !textMatch(p.shift,f.shift))return false;
+      if((f.tutors||[]).length && !f.tutors.some(v=>(p.tutors||[]).some(x=>textMatch(x,v))))return false;
+      if((f.areas||[]).length && !f.areas.some(v=>textMatch(p.area,v)))return false;
+      if((f.venues||[]).length && !f.venues.some(v=>textMatch(p.venue,v)))return false;
+      if((f.shifts||[]).length && !f.shifts.some(v=>textMatch(p.shift,v)))return false;
 
       const hasPeopleLevelFilter=!!(
-        f.school || f.dependency || f.sector || f.comuna || f.status ||
-        (f.dates||[]).length || (f.excludeDates||[]).length || (f.excludeSurnames||[]).length || f.q
+        (f.schools||[]).length || (f.dependencies||[]).length || (f.sectors||[]).length ||
+        (f.comunas||[]).length || (f.statuses||[]).length || (f.cargos||[]).length ||
+        (f.dates||[]).length || f.q
       );
       if(hasPeopleLevelFilter && !scopedCommissionCodes.has(p.code))return false;
       return true;
@@ -1705,12 +1794,12 @@
       ...(dataset.savedFilters||[]).filter(x=>!(savedFilterActionCode(x)===action && normalize(x.name)===normalize(item.name))),
       item
     ];
-    await saveState(); renderSavedFilters(); $('#savedFilterSelect').value=item.id; $('#deleteFilterBtn').disabled=false; toast('Filtro guardado solo para '+action);
+    await saveState();  $('#savedFilterSelect').value=item.id; $('#deleteFilterBtn').disabled=false; toast('Filtro guardado solo para '+action);
   }
   async function deleteSavedFilter(){
     const id=$('#savedFilterSelect').value;if(!id)return;
     dataset.savedFilters=(dataset.savedFilters||[]).filter(x=>x.id!==id);
-    await saveState();renderSavedFilters();toast('Filtro eliminado');
+    await saveState();toast('Filtro eliminado');
   }
 
   function groupUnique(rows,labelFn,idFn=idOf){
@@ -1772,7 +1861,7 @@
       ? 'Promedio de '+selectedMetrics.length+' fechas seleccionadas'
       : (currentMetric ? formatDate(currentMetric.date)+' · '+currentMetric.attendees+'/'+currentMetric.active+' activos' : 'por encuentro: asistentes / activos');
     chart('attendanceChart','line',metrics.map(x=>formatDate(x.date)),[
-      {label:'Docentes asistentes únicos',data:metrics.map(x=>x.attendees),tension:.28,fill:false}
+      {label:'Docentes asistentes',data:metrics.map(x=>x.attendees),tension:.28,fill:false}
     ],{
       scales:{
         x:{grid:{display:false},ticks:{color:'#7a8790',font:{size:9}}},
@@ -2857,18 +2946,16 @@
 
   function filterSummaryPairs(){
     const f=currentFilters();
+    const joined=(arr)=>(arr||[]).join(' · ');
     const pairs=[
-      ['Acción',f.action],['Escuela',f.school],['Dependencia',f.dependency],
-      ['Sector de gestión',f.sector],['Comuna',f.comuna],['Estado',f.status],
-      ['Fechas de encuentro',(f.dates||[]).map(formatDate).join(' · ')],['Tutor / capacitador',f.tutor],
-      ['Área',f.area],['Sede',f.venue],['Turno',f.shift],
-      ['Excluir apellidos',(f.excludeSurnames||[]).join(' · ')],
-      ['Excluir fechas',(f.excludeDates||[]).map(formatDate).join(' · ')],
+      ['Acción',f.action],['Escuela',joined(f.schools)],['Dependencia',joined(f.dependencies)],
+      ['Sector de gestión',joined(f.sectors)],['Comuna',joined(f.comunas)],['Estado',joined(f.statuses)],
+      ['Fechas de encuentro',(f.dates||[]).map(formatDate).join(' · ')],['Tutor / capacitador',joined(f.tutors)],
+      ['Área',joined(f.areas)],['Sede',joined(f.venues)],['Turno',joined(f.shifts)],['Cargo',joined(f.cargos)],
       ['Búsqueda',f.q]
     ];
     return pairs.filter(([,v])=>String(v||'').trim()!=='');
   }
-
   function updatePrintMeta(){
     if(!$('#printGenerated'))return;
     $('#printGenerated').textContent='Generado: '+new Date().toLocaleString('es-AR');
@@ -2899,8 +2986,8 @@
         CUE:m.cue||'',
         ESCUELA:upper(m.school)||'',
         DEPENDENCIA:upper(m.dependency)||'',
-        'INSCRIPTOS ÚNICOS':s.value,
-        'ASISTENTES ÚNICOS':a,
+        'INSCRIPTOS':s.value,
+        'ASISTENTES':a,
         'ASISTENCIA %':rate(a,s.value)
       };
     });
@@ -3056,8 +3143,8 @@
         {INDICADOR:'Fecha de finalización',VALOR:selectedAction().finalizedAt?new Date(selectedAction().finalizedAt).toLocaleString('es-AR'):''}
       ]:[]),
       ...filters.map(([k,v])=>({INDICADOR:'Filtro · '+k,VALOR:v})),
-      {INDICADOR:'Docentes inscriptos únicos',VALOR:regIds.size},
-      {INDICADOR:'Docentes asistentes únicos',VALOR:attIds.size},
+      {INDICADOR:'Docentes inscriptos',VALOR:regIds.size},
+      {INDICADOR:'Docentes asistentes',VALOR:attIds.size},
       {INDICADOR:'Asistencia %',VALOR:rate(attIds.size,regIds.size)},
       {INDICADOR:'Presentismo %',VALOR:currentMetric?.presentism??''},
       {INDICADOR:'Escuelas representadas',VALOR:unique(regs.map(schoolKey).filter(Boolean)).length},
@@ -3070,7 +3157,7 @@
     const wb=XLSX.utils.book_new();
     appendJsonSheet(wb,'Resumen',summary);
     appendJsonSheet(wb,'Por fecha',metrics.map(x=>({
-      FECHA:formatDate(x.date),ACTIVOS:x.active,'ASISTENTES ÚNICOS':x.attendees,'PRESENTISMO %':x.presentism
+      FECHA:formatDate(x.date),ACTIVOS:x.active,'ASISTENTES':x.attendees,'PRESENTISMO %':x.presentism
     })));
     appendJsonSheet(wb,'Comisiones',commissionExportRows());
     appendJsonSheet(wb,'Por área',(()=>{
@@ -3127,9 +3214,40 @@
     ['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('drag')}));
     ['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove('drag')}));
     dz.addEventListener('drop',e=>handleFiles([...e.dataTransfer.files]));
-    ['filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterTutor','filterArea','filterVenue','filterShift','excludeDate','excludeSurname'].forEach(id=>{
-      $('#'+id).addEventListener('input',()=>scheduleApplyFilters());
-      $('#'+id).addEventListener('change',applyFilters);
+    document.addEventListener('change',e=>{
+      const checkbox=e.target.closest?.('.multi-filter-options input[type="checkbox"]');
+      if(!checkbox)return;
+      const details=checkbox.closest('[data-multi-filter]');
+      const id=details?.dataset.multiFilter;
+      if(!id)return;
+      const set=multiFilterState[id]||(multiFilterState[id]=new Set());
+      if(checkbox.checked)set.add(checkbox.value);else set.delete(checkbox.value);
+      updateMultiFilterSummary(id);
+      applyFilters();
+    });
+    document.addEventListener('input',e=>{
+      const search=e.target.closest?.('.multi-filter-search');
+      if(!search)return;
+      const details=search.closest('[data-multi-filter]');
+      const q=normalize(search.value);
+      details?.querySelectorAll('.multi-filter-option').forEach(opt=>{
+        opt.hidden=!!q&&!normalize(opt.textContent).includes(q);
+      });
+    });
+    document.addEventListener('click',e=>{
+      const all=e.target.closest?.('[data-multi-all]');
+      const clear=e.target.closest?.('[data-multi-clear]');
+      if(!all&&!clear)return;
+      e.preventDefault();
+      const details=e.target.closest('[data-multi-filter]');
+      const id=details?.dataset.multiFilter;if(!id)return;
+      const set=multiFilterState[id]||(multiFilterState[id]=new Set());
+      details.querySelectorAll('.multi-filter-options input[type="checkbox"]').forEach(cb=>{
+        cb.checked=!!all;
+        if(all)set.add(cb.value);else set.delete(cb.value);
+      });
+      updateMultiFilterSummary(id);
+      applyFilters();
     });
     $('#filterDate').addEventListener('change',applyFilters);
     $('#filterDateManual').addEventListener('input',()=>scheduleApplyFilters());
@@ -3139,37 +3257,31 @@
       const canonical=actionCodeValue(raw);
       const exists=canonical&&dataset.actions.some(x=>x.code===canonical);
       if(!raw){
-        refreshFilterOptions();renderSavedFilters();applyFilters();return;
+        refreshFilterOptions();applyFilters();return;
       }
       if(exists){
         if(el.value!==canonical)el.value=canonical;
-        refreshFilterOptions();renderSavedFilters();applyFilters();
+        refreshFilterOptions();applyFilters();
       }else{
-        renderSavedFilters();
+        
       }
     });
     $('#filterAction').addEventListener('change',()=>{
       const el=$('#filterAction');
       const canonical=actionCodeValue(el.value);
       if(canonical&&dataset.actions.some(x=>x.code===canonical))el.value=canonical;
-      refreshFilterOptions();renderSavedFilters();applyFilters();
+      refreshFilterOptions();applyFilters();
     });
     $('#globalSearch').addEventListener('input',()=>scheduleApplyFilters());
     $('#detailSearch').addEventListener('input',()=>{clearTimeout(renderDetail.t);renderDetail.t=setTimeout(renderDetail,180)});
-    $('#savedFilterSelect').addEventListener('change',()=>{
-      const id=$('#savedFilterSelect').value;
-      $('#deleteFilterBtn').disabled=!id;
-      const action=$('#filterAction').value.trim().toUpperCase();
-      const f=(dataset.savedFilters||[]).find(x=>x.id===id && savedFilterActionCode(x)===action);
-      if(f)applyFilterSnapshot(f.config);
-    });
-    $('#saveFilterBtn').addEventListener('click',saveCurrentFilter);
-    $('#deleteFilterBtn').addEventListener('click',deleteSavedFilter);
     $('#clearFilters').addEventListener('click',()=>{
-      ['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterTutor','filterArea','filterVenue','filterShift'].forEach(id=>$('#'+id).value='');
-      setSelectedValues($('#filterDate'),[]);$('#filterDateManual').value='';
-      $('#excludeDate').value='';$('#excludeSurname').value='';
-      $('#globalSearch').value='';$('#savedFilterSelect').value='';$('#deleteFilterBtn').disabled=true;renderSavedFilters();applyFilters();
+      $('#filterAction').value='';
+      clearAllMultiFilters();
+      setSelectedValues($('#filterDate'),[]);
+      $('#filterDateManual').value='';
+      $('#globalSearch').value='';
+      refreshFilterOptions();
+      applyFilters();
     });
     $('#printBtn').addEventListener('click',()=>{
       switchView('reports');
@@ -3233,43 +3345,13 @@
       const btn=e.target.closest('[data-toggle-action-status]');
       if(btn)toggleActionStatus(btn.dataset.toggleActionStatus);
     });
-    $('#editorAction')?.addEventListener('change',()=>{renderEditor();previewCustomReport()});
-    $('#editorDataset')?.addEventListener('change',()=>{editorState.reportColumns=[];renderEditor()});
-    $('#editorSearch')?.addEventListener('input',()=>{clearTimeout(renderEditor.t);renderEditor.t=setTimeout(renderEditor,160)});
-    $('#editorAddRecord')?.addEventListener('click',()=>openRecordModal());
-    $('#editorAddField')?.addEventListener('click',()=>openFieldModal());
-    $('#editorTableBody')?.addEventListener('click',e=>{
-      const btn=e.target.closest('[data-edit-record]');if(!btn)return;
-      const row=rowByEditorKey(editorType(),editorActionCode(),btn.dataset.editRecord);
-      if(row)openRecordModal(row);
-    });
-    $('#editorFieldsList')?.addEventListener('click',e=>{
-      const edit=e.target.closest('[data-edit-field]');
-      if(edit){const f=fieldDefinitionById(edit.dataset.editField,edit.dataset.fieldScope,editorActionCode());if(f)openFieldModal(f,edit.dataset.fieldScope);return}
-      const toggle=e.target.closest('[data-toggle-field]');
-      if(toggle)toggleEditorField(toggle.dataset.toggleField,toggle.dataset.fieldScope);
-    });
-    $('#editorRecordForm')?.addEventListener('submit',saveEditorRecord);
-    $('#editorDeleteRecord')?.addEventListener('click',deleteEditorRecord);
-    $('#editorRecordClose')?.addEventListener('click',closeRecordModal);
-    $('#editorRecordCancel')?.addEventListener('click',closeRecordModal);
-    $('#editorFieldForm')?.addEventListener('submit',saveEditorField);
-    $('#editorFieldClose')?.addEventListener('click',closeFieldModal);
-    $('#editorFieldCancel')?.addEventListener('click',closeFieldModal);
-    $('#editorFieldType')?.addEventListener('change',()=>{$('#editorFieldOptionsWrap').hidden=$('#editorFieldType').value!=='select'});
-    $('#editorFieldLabel')?.addEventListener('input',()=>{if(!$('#editorFieldId').value&&!$('#editorFieldKey').value)$('#editorFieldKey').value=fieldKeyFromLabel($('#editorFieldLabel').value)});
-    $('#reportDataset')?.addEventListener('change',()=>{editorState.reportColumns=[];renderReportBuilder();previewCustomReport()});
-    $('#reportGroupBy')?.addEventListener('change',previewCustomReport);
-    $('#reportSearch')?.addEventListener('input',()=>{clearTimeout(previewCustomReport.t);previewCustomReport.t=setTimeout(previewCustomReport,180)});
-    $('#reportColumns')?.addEventListener('change',previewCustomReport);
-    $('#reportPreviewBtn')?.addEventListener('click',previewCustomReport);
-    $('#reportExportBtn')?.addEventListener('click',exportCustomReport);
     $('#sourceForm')?.addEventListener('submit',saveSourceFromForm);
     $('#sourceAction')?.addEventListener('input',e=>{e.target.value=e.target.value.toUpperCase().replace(/[^C0-9 _-]/g,'').slice(0,8)});
     $('#sourceAction')?.addEventListener('change',e=>{const c=actionCodeValue(e.target.value);if(c)e.target.value=c});
   }
 
   async function init(){
+    initMultiFilterWidgets();
     bind();
     await loadState();
     renderAll();

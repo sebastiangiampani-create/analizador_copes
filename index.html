@@ -24,6 +24,7 @@
         <button class="nav-item active" data-view="dashboard"><span class="nav-icon">▦</span><span>Panel general</span></button>
         <button class="nav-item" data-view="imports"><span class="nav-icon">⇧</span><span>Cargar bases</span></button>
         <button class="nav-item" data-view="sources"><span class="nav-icon">↻</span><span>Fuentes</span></button>
+        <button class="nav-item" data-view="reports"><span class="nav-icon">▤</span><span>Informes</span></button>
         <button class="nav-item" data-view="editor"><span class="nav-icon">✎</span><span>Editar base</span></button>
         <button class="nav-item" data-view="detail"><span class="nav-icon">≡</span><span>Detalle</span></button>
       </nav>
@@ -51,7 +52,7 @@
           <p id="subtitle">Carga una base para empezar a analizar.</p>
         </div>
         <div class="top-actions">
-          <button id="printBtn" class="btn ghost" disabled>Imprimir / PDF</button>
+          <button id="printBtn" class="btn ghost" disabled>Construir informe</button>
           <button id="excelBtn" class="btn ghost" disabled>Exportar Excel</button>
           <button id="exportBtn" class="btn ghost" disabled>CSV detalle</button>
           <button id="storageStatusBtn" class="btn ghost storage-status-btn" type="button">Supabase: conectar</button>
@@ -384,6 +385,70 @@
         </article>
       </section>
 
+      <section id="view-reports" class="view">
+        <div class="page-intro">
+          <span class="section-kicker">INFORMES</span>
+          <h2>Constructor de informes</h2>
+          <p>Armá un informe con los indicadores, gráficos y tablas que necesites. El PDF imprime solamente el informe, no la página completa.</p>
+        </div>
+
+        <div class="report-workspace">
+          <article class="panel report-config-panel">
+            <div class="panel-head">
+              <div><h3>Encabezado del informe</h3><p>Definí cómo querés presentar el documento.</p></div>
+              <span class="panel-chip">A4</span>
+            </div>
+            <div class="report-meta-grid">
+              <label class="field">
+                <span>Título</span>
+                <input id="reportDocTitle" type="text" value="Informe de acciones formativas" />
+              </label>
+              <label class="field">
+                <span>Subtítulo</span>
+                <input id="reportDocSubtitle" type="text" placeholder="Ej. Seguimiento de participación · Octubre 2026" />
+              </label>
+              <label class="field full">
+                <span>Observaciones / introducción</span>
+                <textarea id="reportDocNotes" rows="3" placeholder="Texto opcional para contextualizar el informe."></textarea>
+              </label>
+              <label class="report-check full">
+                <input id="reportIncludeFilters" type="checkbox" checked />
+                <span>Incluir los filtros activos en el encabezado</span>
+              </label>
+            </div>
+          </article>
+
+          <div class="report-builder-grid">
+            <article class="panel">
+              <div class="panel-head">
+                <div><h3>Contenido disponible</h3><p>Podés tomar elementos del tablero o agregarlos desde acá.</p></div>
+                <button id="reportAddAllCharts" type="button" class="btn ghost compact">Agregar todos los gráficos</button>
+              </div>
+              <div id="reportCatalog" class="report-catalog"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div><h3>Contenido del informe</h3><p>Ordená los bloques antes de imprimir.</p></div>
+                <button id="reportClear" type="button" class="btn ghost compact">Vaciar</button>
+              </div>
+              <div id="reportSelectedItems" class="report-selected-items"></div>
+              <div class="report-final-actions">
+                <button id="reportPreview" type="button" class="btn ghost">Actualizar vista previa</button>
+                <button id="reportPrint" type="button" class="btn primary">Imprimir / Guardar PDF</button>
+              </div>
+            </article>
+          </div>
+
+          <article class="panel report-preview-panel">
+            <div class="panel-head">
+              <div><h3>Vista previa</h3><p>Así se construirá el informe con los filtros y gráficos actuales.</p></div>
+            </div>
+            <div id="reportPreviewRoot" class="report-preview-root"></div>
+          </article>
+        </div>
+      </section>
+
       <section id="view-editor" class="view">
         <div class="page-intro">
           <span class="section-kicker">EDICIÓN DE BASE</span>
@@ -503,6 +568,8 @@
       </section>
     </main>
   </div>
+
+  <div id="reportPrintRoot" class="report-print-root" aria-hidden="true"></div>
 
   <div id="editorRecordModal" class="storage-modal" hidden>
     <div class="storage-modal-card editor-record-card">

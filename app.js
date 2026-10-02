@@ -64,8 +64,14 @@
   let reportDraft={title:'Informe de acciones formativas',subtitle:'',notes:'',includeFilters:true,items:[],...readLocalJson(REPORT_DRAFT_KEY,{})};
   if(!Array.isArray(reportDraft.items))reportDraft.items=[];
 
-  function saveChartPrefs(){localStorage.setItem(CHART_PREF_KEY,JSON.stringify(chartPrefs))}
-  function saveReportDraft(){localStorage.setItem(REPORT_DRAFT_KEY,JSON.stringify(reportDraft))}
+  function saveChartPrefs(){
+    localStorage.setItem(CHART_PREF_KEY,JSON.stringify(chartPrefs));
+    if(remoteReady)scheduleRemoteConfigSave();
+  }
+  function saveReportDraft(){
+    localStorage.setItem(REPORT_DRAFT_KEY,JSON.stringify(reportDraft));
+    if(remoteReady)scheduleRemoteConfigSave();
+  }
 
 
   const $ = (s) => document.querySelector(s);
@@ -365,7 +371,9 @@
     await remoteRequest('save_config',{payload:{
       sources:dataset.sources||[],
       savedFilters:dataset.savedFilters||[],
-      customFields:dataset.customFields||[]
+      customFields:dataset.customFields||[],
+      chartPrefs,
+      reportDraft
     }});
   }
 
@@ -440,6 +448,15 @@
       dataset.sources=Array.isArray(remote.config?.sources)?remote.config.sources:[];
       dataset.savedFilters=Array.isArray(remote.config?.savedFilters)?remote.config.savedFilters:[];
       dataset.customFields=Array.isArray(remote.config?.customFields)?remote.config.customFields:[];
+      if(remote.config?.chartPrefs && typeof remote.config.chartPrefs==='object'){
+        chartPrefs={...chartPrefs,...remote.config.chartPrefs};
+        saveChartPrefs();
+      }
+      if(remote.config?.reportDraft && typeof remote.config.reportDraft==='object'){
+        reportDraft={...reportDraft,...remote.config.reportDraft};
+        if(!Array.isArray(reportDraft.items))reportDraft.items=[];
+        saveReportDraft();
+      }
       dataset.masters={
         schools:Array.isArray(remote.masters?.schools)?remote.masters.schools:[],
         areas:Array.isArray(remote.masters?.areas)?remote.masters.areas:[],
@@ -1906,6 +1923,38 @@
     }
   }
 
+  function initReportPickers(){
+    for(const [id,title] of Object.entries(KPI_META)){
+      const value=document.getElementById(id);
+      const card=value?.closest('.kpi, .insight-strip article');
+      if(!value||!card||card.querySelector('[data-report-picker="'+id+'"]'))continue;
+      const btn=document.createElement('button');
+      btn.type='button';
+      btn.className='report-mini-add';
+      btn.dataset.reportPicker=id;
+      btn.dataset.addReport='kpi:'+id;
+      btn.title='Agregar '+title+' al informe';
+      btn.textContent='+ Informe';
+      card.appendChild(btn);
+    }
+    for(const [id,title] of Object.entries(TABLE_META)){
+      const body=document.getElementById(id);
+      const panel=body?.closest('.panel');
+      const head=panel?.querySelector('.panel-head');
+      if(!body||!panel||!head||head.querySelector('[data-report-picker="'+id+'"]'))continue;
+      const tools=document.createElement('div');
+      tools.className='chart-card-tools';
+      tools.dataset.reportPicker=id;
+      const add=document.createElement('button');
+      add.type='button';
+      add.className='chart-tool-btn';
+      add.dataset.addReport='table:'+id;
+      add.textContent='+ Informe';
+      tools.appendChild(add);
+      head.appendChild(tools);
+    }
+  }
+
   function setChartType(id,type){
     const meta=CHART_META[id];if(!meta||!meta.allowed.includes(type))return;
     chartPrefs[id]=type;saveChartPrefs();
@@ -2779,13 +2828,18 @@
 
   function renderAll(){
     refreshFilterOptions(); renderImportResults(); renderSources(); applyFilters(); renderEditor();
-    initChartControls(); renderReportBuilder();
+    initChartControls(); initReportPickers(); renderReportBuilder();
   }
 
   function switchView(name){
-    $('.view').forEach(x=>x.classList.remove('active')); $('.nav-item').forEach(x=>x.classList.remove('active'));
-    $('#view-'+name)?.classList.add('active'); document.querySelector(`.nav-item[data-view="${name}"]`)?.classList.add('active');
-    if(name==='reports'){renderReportBuilder();requestAnimationFrame(()=>renderReportPreview())}
+    $('.view').forEach(x=>x.classList.remove('active'));
+    $('.nav-item').forEach(x=>x.classList.remove('active'));
+    $('#view-'+name)?.classList.add('active');
+    document.querySelector(`.nav-item[data-view="${name}"]`)?.classList.add('active');
+    if(name==='reports'){
+      renderReportBuilder();
+      requestAnimationFrame(()=>renderReportPreview());
+    }
   }
 
   function exportFileStem(){
@@ -3111,7 +3165,11 @@
       $('#excludeDate').value='';$('#excludeSurname').value='';
       $('#globalSearch').value='';$('#savedFilterSelect').value='';$('#deleteFilterBtn').disabled=true;renderSavedFilters();applyFilters();
     });
-    $('#printBtn').addEventListener('click',printDashboard);
+    $('#printBtn').addEventListener('click',()=>{
+      switchView('reports');
+      renderReportBuilder();
+      requestAnimationFrame(()=>renderReportPreview());
+    });
     document.addEventListener('change',e=>{
       const select=e.target.closest?.('[data-chart-type]');
       if(select)setChartType(select.dataset.chartType,select.value);

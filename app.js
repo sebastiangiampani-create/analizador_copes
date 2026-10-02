@@ -438,7 +438,13 @@
         const mergedSources=Array.isArray(remote.config?.sources)&&remote.config.sources.length ? remote.config.sources : localSources;
         const mergedFilters=Array.isArray(remote.config?.savedFilters)&&remote.config.savedFilters.length ? remote.config.savedFilters : localFilters;
         const mergedFields=Array.isArray(remote.config?.customFields)&&remote.config.customFields.length ? remote.config.customFields : localFields;
-        await remoteRequest('save_config',{payload:{sources:mergedSources,savedFilters:mergedFilters,customFields:mergedFields}});
+        await remoteRequest('save_config',{payload:{
+          sources:mergedSources,
+          savedFilters:mergedFilters,
+          customFields:mergedFields,
+          chartPrefs:(remote.config?.chartPrefs && typeof remote.config.chartPrefs==='object')?remote.config.chartPrefs:chartPrefs,
+          reportDraft:(remote.config?.reportDraft && typeof remote.config.reportDraft==='object')?remote.config.reportDraft:reportDraft
+        }});
       }
 
       if(migrated) remote=await remoteRequest('load_index');

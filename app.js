@@ -6,6 +6,7 @@
   const REMOTE_ENDPOINT = 'https://qchnawvoensqnynsuhfu.supabase.co/functions/v1/copes-state';
   const REMOTE_KEY_STORAGE = 'analizador_copes_workspace_key_v1';
   let remoteReady = false;
+  let remoteInitPromise = null;
   let storageModalResolve = null;
   let configSaveTimer = null;
   let dataset = structuredClone(EMPTY);
@@ -325,7 +326,22 @@
     },250);
   }
 
-  async function initRemotePersistence(){
+  async function fetchRemoteActionPayload(actionCode){
+    let lastError=null;
+    for(let attempt=0;attempt<2;attempt++){
+      try{
+        const result=await remoteRequest('get_action_payload',{actionCode});
+        if(!result?.action?.payload)throw new Error('remote_payload_missing');
+        return result.action.payload;
+      }catch(e){
+        lastError=e;
+        if(attempt===0)await new Promise(resolve=>setTimeout(resolve,300));
+      }
+    }
+    throw lastError||new Error('remote_payload_failed');
+  }
+
+  async function initRemotePersistenceCore(){
     const localSnapshots=(dataset.actions||[]).map(a=>buildActionSnapshot(a.code)).filter(Boolean);
     const localSources=structuredClone(dataset.sources||[]);
     const localFilters=structuredClone(dataset.savedFilters||[]);
@@ -338,7 +354,9 @@
     }
 
     try{
-      let remote=await remoteRequest('load');
+      // Primero se carga sólo el índice liviano. Los payloads grandes se piden
+      // acción por acción para que una base pesada no bloquee toda la aplicación.
+      let remote=await remoteRequest('load_index');
       const remoteByCode=new Map((remote.actions||[]).map(r=>[r.action_code,r]));
       let migrated=0;
 
@@ -348,21 +366,23 @@
         const localWhen=Date.parse(payload?.importInfo?.when||'')||0;
         const remoteWhen=Date.parse(remoteRow?.updated_at||'')||0;
         if(!remoteRow || (localWhen && localWhen>remoteWhen)){
+          setStorageUi('connected','Sincronizando cambios locales de '+code+'...');
           await saveRemotePayload(payload);
           migrated++;
         }
       }
 
-      if(localSources.length || localFilters.length){
+      if(localSources.length || localFilters.length || localFields.length){
         const mergedSources=Array.isArray(remote.config?.sources)&&remote.config.sources.length ? remote.config.sources : localSources;
         const mergedFilters=Array.isArray(remote.config?.savedFilters)&&remote.config.savedFilters.length ? remote.config.savedFilters : localFilters;
         const mergedFields=Array.isArray(remote.config?.customFields)&&remote.config.customFields.length ? remote.config.customFields : localFields;
         await remoteRequest('save_config',{payload:{sources:mergedSources,savedFilters:mergedFilters,customFields:mergedFields}});
       }
 
-      remote=await remoteRequest('load');
+      if(migrated) remote=await remoteRequest('load_index');
+
+      const actionIndex=remote.actions||[];
       dataset=structuredClone(EMPTY);
-      for(const row of (remote.actions||[])) applyActionSnapshot(row.payload);
       dataset.sources=Array.isArray(remote.config?.sources)?remote.config.sources:[];
       dataset.savedFilters=Array.isArray(remote.config?.savedFilters)?remote.config.savedFilters:[];
       dataset.customFields=Array.isArray(remote.config?.customFields)?remote.config.customFields:[];
@@ -371,19 +391,41 @@
         areas:Array.isArray(remote.masters?.areas)?remote.masters.areas:[],
         cargos:Array.isArray(remote.masters?.cargos)?remote.masters.cargos:[]
       };
-      applyMasterDataToDataset();
+
+      for(let i=0;i<actionIndex.length;i++){
+        const row=actionIndex[i];
+        const code=row.action_code;
+        setStorageUi('connected','Cargando bases '+(i+1)+'/'+actionIndex.length+' · '+code+'...');
+        const payload=await fetchRemoteActionPayload(code);
+        applyActionSnapshot(payload);
+        // Cede el hilo al navegador entre bases para evitar que la interfaz
+        // parezca congelada con acciones de varios miles de registros.
+        await new Promise(resolve=>setTimeout(resolve,0));
+      }
+
+      applyMasterDataToDataset({onlyMissing:true});
       applyAllEditorLayers();
 
       await saveState();
-      const onlineCount=(remote.actions||[]).length;
-      setStorageUi('connected',onlineCount+' acción(es) guardada(s) online y verificadas'+(migrated?' · '+migrated+' migrada(s) desde este navegador':'')+'.');
+      const onlineCount=actionIndex.length;
+      setStorageUi('connected',onlineCount+' acción(es) cargada(s) desde Supabase y verificadas'+(migrated?' · '+migrated+' migrada(s) desde este navegador':'')+'.');
       return true;
     }catch(e){
       console.error('Error inicializando persistencia remota',e);
       remoteReady=false;
-      setStorageUi('error','No se pudo verificar el guardado online. Las cargas locales no se consideran respaldadas.');
-      toast('Supabase no pudo verificarse. No cargues nuevas bases hasta reconectar.');
+      setStorageUi('error','No se pudo terminar de cargar la base desde Supabase. La copia online no se borró.');
+      toast('No se pudo completar la carga desde Supabase. Reintentá la conexión.');
       return false;
+    }
+  }
+
+  async function initRemotePersistence(){
+    if(remoteInitPromise)return remoteInitPromise;
+    remoteInitPromise=initRemotePersistenceCore();
+    try{
+      return await remoteInitPromise;
+    }finally{
+      remoteInitPromise=null;
     }
   }
 
@@ -719,12 +761,22 @@
     return out;
   }
 
-  function applyMasterDataToDataset(){
+  function applyMasterDataToDataset({onlyMissing=false}={}){
     const idx=schoolMasterIndexes();
-    dataset.registrations=(dataset.registrations||[]).map(r=>enrichMasterRow(r,idx));
-    dataset.attendance=(dataset.attendance||[]).map(r=>enrichMasterRow(r,idx));
-    dataset.bajas=(dataset.bajas||[]).map(r=>enrichMasterRow(r,idx));
-    dataset.proposals=(dataset.proposals||[]).map(p=>({...p,areaClass:classifyArea(p.area)||p.areaClass||''}));
+    const enrichIfNeeded=(r)=>{
+      if(!onlyMissing)return enrichMasterRow(r,idx);
+      const schoolDone=Object.prototype.hasOwnProperty.call(r||{},'masterSchoolMatched');
+      const areaDone=Object.prototype.hasOwnProperty.call(r||{},'areaClass');
+      const cargoDone=Object.prototype.hasOwnProperty.call(r||{},'cargoClass');
+      return schoolDone&&areaDone&&cargoDone ? r : enrichMasterRow(r,idx);
+    };
+    dataset.registrations=(dataset.registrations||[]).map(enrichIfNeeded);
+    dataset.attendance=(dataset.attendance||[]).map(enrichIfNeeded);
+    dataset.bajas=(dataset.bajas||[]).map(enrichIfNeeded);
+    dataset.proposals=(dataset.proposals||[]).map(p=>{
+      if(onlyMissing && Object.prototype.hasOwnProperty.call(p||{},'areaClass'))return p;
+      return {...p,areaClass:classifyArea(p.area)||p.areaClass||''};
+    });
     applyTutorsToDataset();
   }
 
@@ -2812,9 +2864,16 @@
       }
     });
     $('#storageStatusBtn')?.addEventListener('click',async()=>{
-      const ok=await initRemotePersistence();
-      renderAll();
-      if(ok)toast('Supabase sincronizado y verificado.');
+      const btn=$('#storageStatusBtn');
+      if(btn?.disabled)return;
+      if(btn)btn.disabled=true;
+      try{
+        const ok=await initRemotePersistence();
+        renderAll();
+        if(ok)toast('Supabase sincronizado y verificado.');
+      }finally{
+        if(btn)btn.disabled=false;
+      }
     });
     $('#storageKeyForm')?.addEventListener('submit',e=>{
       e.preventDefault();
@@ -2865,9 +2924,10 @@
   async function init(){
     bind();
     await loadState();
-    await initRemotePersistence();
     renderAll();
-    startSourceAutoSync();
+    const loaded=await initRemotePersistence();
+    renderAll();
+    if(loaded)startSourceAutoSync();
     if(!dataset.actions.length) switchView('imports');
   }
   init();

@@ -248,18 +248,41 @@
     if(resolve) resolve(value);
   }
 
+  async function pingRemoteWithRetry(key,{attempts=3}={}){
+    let lastError=null;
+    for(let attempt=0;attempt<attempts;attempt++){
+      try{
+        await remoteRequest('ping',{},key);
+        return true;
+      }catch(e){
+        lastError=e;
+        const transient=e?.status===502||e?.status===503||e?.status===504||/tardó demasiado|Failed to fetch|network/i.test(e?.message||'');
+        if(!transient||attempt===attempts-1)break;
+        await new Promise(resolve=>setTimeout(resolve,350*(attempt+1)));
+      }
+    }
+    throw lastError||new Error('remote_ping_failed');
+  }
+
   async function ensureRemoteAccess({interactive=true}={}){
     let key=workspaceKey();
     if(key){
       try{
-        await remoteRequest('ping',{},key);
+        await pingRemoteWithRetry(key,{attempts:3});
         remoteReady=true;
         setStorageUi('connected');
         return true;
       }catch(e){
-        console.warn('Clave de acceso guardada inválida o conexión caída',e);
-        localStorage.removeItem(REMOTE_KEY_STORAGE);
-        key='';
+        console.warn('No se pudo validar temporalmente la conexión guardada',e);
+        // Solo descartamos la clave si el backend confirma que es inválida.
+        if(e?.status===401||e?.code==='invalid_workspace_key'){
+          localStorage.removeItem(REMOTE_KEY_STORAGE);
+          key='';
+        }else{
+          remoteReady=false;
+          setStorageUi('error','Supabase respondió con un error temporal. Reintentá en unos segundos.');
+          return false;
+        }
       }
     }
     remoteReady=false;
@@ -273,7 +296,7 @@
       return false;
     }
     try{
-      await remoteRequest('ping',{},entered);
+      await pingRemoteWithRetry(entered,{attempts:3});
       localStorage.setItem(REMOTE_KEY_STORAGE,entered);
       remoteReady=true;
       setStorageUi('connected');
@@ -1284,6 +1307,23 @@
 
   async function handleFiles(files){
     if(!files.length)return;
+    const allowed=/\.(xlsx|xls|xlsm|xlsb|csv)$/i;
+    const rejected=files.filter(file=>!allowed.test(file.name||''));
+    if(rejected.length){
+      const results=rejected.map(file=>({ok:false,file:file.name,error:'Formato no compatible. Usá Excel (.xlsx, .xls, .xlsm, .xlsb) o CSV.'}));
+      renderImportResults(results);
+      $('#importSummary').textContent='Hay archivos con formato no compatible.';
+      toast('Revisá el formato de los archivos seleccionados.');
+      if($('#fileInput'))$('#fileInput').value='';
+      return;
+    }
+    if(!globalThis.XLSX){
+      renderImportResults(files.map(file=>({ok:false,file:file.name,error:'No se cargó la biblioteca de Excel. Recargá la página e intentá nuevamente.'})));
+      $('#importSummary').textContent='No se pudo iniciar el lector de Excel.';
+      toast('No se pudo iniciar el lector de Excel.');
+      if($('#fileInput'))$('#fileInput').value='';
+      return;
+    }
     if(!remoteReady){
       const connected=await ensureRemoteAccess({interactive:true});
       if(!connected){
@@ -1331,7 +1371,8 @@
         results.push({ok:true,updated:existed,...parsed.importInfo});
       }catch(e){
         console.error('Error importando',file.name,e);
-        results.push({ok:false,file:file.name,error:e.message});
+        const message=e?.message||'No se pudo leer el archivo.';
+        results.push({ok:false,file:file.name,error:message});
       }
     }
     await saveState();
@@ -1377,8 +1418,9 @@
         toast((parts.join(' · ')||okCount+' archivo(s) procesado(s)')+' · guardado online verificado.');
       }
     }else{
-      renderAll();
       switchView('imports');
+      $('#importSummary').textContent='No se pudo cargar ningún archivo. Revisá el detalle que aparece abajo.';
+      // No llamar renderAll() acá: reemplazaría el error recién mostrado por el historial anterior.
       toast('No se pudo cargar ningún archivo. Revisá el detalle.');
     }
     if($('#fileInput')) $('#fileInput').value='';
@@ -3378,7 +3420,12 @@
 
   function bind(){
     $$('.nav-item').forEach(b=>b.addEventListener('click',()=>switchView(b.dataset.view)));
-    $('#pickFiles').addEventListener('click',()=>$('#fileInput').click());
+    $('#pickFiles').addEventListener('click',()=>{
+      const input=$('#fileInput');
+      if(!input)return;
+      input.value='';
+      input.click();
+    });
     $('#fileInput').addEventListener('change',e=>handleFiles([...e.target.files]));
     const dz=$('#dropzone');
     ['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('drag')}));

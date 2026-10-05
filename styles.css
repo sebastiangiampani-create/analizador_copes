@@ -439,3 +439,28 @@ tbody tr:hover{background:#f7faf9}
 .custom-report-preview-scroll th{position:sticky;top:0;z-index:2;background:#f7faf9}
 @media(max-width:980px){.custom-report-controls{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:640px){.custom-report-controls{grid-template-columns:1fr}.custom-report-actions .btn{width:100%}}
+
+
+/* Gestión manual de tutores */
+.tutor-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:0 0 18px}
+.tutor-admin-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;align-items:start}
+.tutor-form{display:grid;grid-template-columns:2fr 1fr 1.5fr auto;gap:12px;align-items:end}
+.tutor-assignment-form{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tutor-assignment-form .full{grid-column:1/-1}
+.tutor-form-action{display:flex;align-items:flex-end}
+.tutor-form-action.full{grid-column:1/-1;justify-content:flex-start}
+.tutor-table-scroll{margin-top:16px;max-height:480px}
+.tutor-assignment-list-panel{margin-top:18px}
+#manualTutorPeople{min-height:170px}
+#manualTutorCatalogTable .badge,
+#manualTutorAssignmentsTable .badge{white-space:nowrap}
+@media(max-width:1100px){
+  .tutor-admin-grid{grid-template-columns:1fr}
+  .tutor-form{grid-template-columns:1fr 1fr}
+  .tutor-form-action{grid-column:1/-1}
+}
+@media(max-width:720px){
+  .tutor-summary{grid-template-columns:1fr}
+  .tutor-form,.tutor-assignment-form{grid-template-columns:1fr}
+  .tutor-assignment-form .full{grid-column:auto}
+}

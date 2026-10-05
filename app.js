@@ -5,6 +5,19 @@
   const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], bajas: [], tutors: [], imports: [], sources: [], savedFilters: [], customFields: [], masters:{schools:[],areas:[],cargos:[]} };
   const REMOTE_ENDPOINT = 'https://qchnawvoensqnynsuhfu.supabase.co/functions/v1/copes-state';
   const REMOTE_KEY_STORAGE = 'analizador_copes_workspace_key_v1';
+  const TUTOR_COURSE_SOURCE={
+    id:'tutor-course-master',
+    sourceKind:'tutor_courses',
+    actionCode:'GLOBAL',
+    name:'Tutores y cursos',
+    url:'https://docs.google.com/spreadsheets/d/1m6Pf_92q3mGTJN4XO6n4v74xv1zOk2n1PeSQNgd7DhM/edit?gid=610453907#gid=610453907',
+    spreadsheetId:'1m6Pf_92q3mGTJN4XO6n4v74xv1zOk2n1PeSQNgd7DhM',
+    gid:'610453907',
+    authMode:'backend_link',
+    intervalMinutes:5,
+    active:true,
+    locked:true
+  };
   let remoteReady = false;
   let remoteInitPromise = null;
   let storageModalResolve = null;
@@ -897,23 +910,107 @@
     ).trim();
   }
 
-  function parseTutorRows(rows,fallbackCode='',source=''){
+  function tutorNamesFromRow(raw,m){
+    const explicit=[];
+    for(const [key,value] of Object.entries(raw||{})){
+      const nk=normalize(key);
+      if((nk.includes('tutor')||nk.includes('capacitador')||nk.includes('formador')||nk.includes('docente a cargo')) &&
+         value!==null && value!==undefined && String(value).trim()!==''){
+        explicit.push(...splitTutors(value));
+      }
+    }
+    if(explicit.length)return unique(explicit);
+    const fallback=tutorNameFromRow(raw,m);
+    return fallback?[fallback]:[];
+  }
+
+  function tutorCourseValue(raw,m){
+    return String(
+      pickExact(raw,[
+        'CÓDIGO CURSO','CODIGO CURSO','Código curso','Codigo curso',
+        'CÓDIGO COMISIÓN','CODIGO COMISION','Código comisión','Codigo comision',
+        'CURSO','Curso','COMISIÓN','COMISION','Comisión','Comision',
+        'TALLER','Taller','PROPUESTA','Propuesta','CÓDIGO','CODIGO','Código','Codigo'
+      ]) ||
+      pick(m,[
+        'CÓDIGO CURSO','CODIGO CURSO','CÓDIGO COMISIÓN','CODIGO COMISION',
+        'CURSO','COMISIÓN','COMISION','TALLER','PROPUESTA','CÓDIGO','CODIGO'
+      ]) || ''
+    ).trim();
+  }
+
+  function tutorCourseName(raw,m){
+    return String(
+      pickExact(raw,[
+        'NOMBRE DEL CURSO','Nombre del curso','NOMBRE CURSO','Nombre curso',
+        'CURSO','Curso','NOMBRE COMISIÓN','NOMBRE COMISION','Nombre comisión','Nombre comision',
+        'COMISIÓN','COMISION','Comisión','Comision','TALLER','Taller','PROPUESTA','Propuesta'
+      ]) ||
+      pick(m,[
+        'NOMBRE DEL CURSO','NOMBRE CURSO','CURSO','NOMBRE COMISIÓN','NOMBRE COMISION',
+        'COMISIÓN','COMISION','TALLER','PROPUESTA'
+      ]) || ''
+    ).trim();
+  }
+
+  function canonicalCommissionKey(value=''){
+    const code=codeIn(value);
+    if(!code)return normalize(value);
+    const m=code.match(/^(C\d{4})(?:-(\d+))?$/);
+    return m?.[2] ? m[1]+'-'+String(Number(m[2])) : (m?.[1]||code);
+  }
+
+  function parseTutorRows(rows,fallbackCode='',source='',options={}){
     const year=yearIn(source,rows.slice(0,6));
-    return rows.map(raw=>{
+    const parsed=[];
+    for(const raw of rows||[]){
       const m=mapRow(raw);
-      const actionCode=(mainCodeIn(
-        pickExact(raw,['ACCIÓN','ACCION','Acción','Accion']) ||
-        pick(m,['ACCIÓN','ACCION','Acción','Accion'])
-      ) || fallbackCode || '').toUpperCase();
-      const row={
-        actionCode,
-        dni:String(pick(m,['DNI'])||'').replace(/\.0$/,'').trim(),
-        name:tutorNameFromRow(raw,m),
-        date:isoDate(pickExact(raw,['FECHA','Fecha'])||pick(m,['FECHA','Fecha']),year),
-        source
-      };
-      return row;
-    }).filter(r=>/^C\d{4}$/.test(r.actionCode)&&idOf(r));
+      const explicitAction=
+        pickExact(raw,[
+          'ACCIÓN','ACCION','Acción','Accion',
+          'CÓDIGO ACCIÓN','CODIGO ACCION','Código acción','Codigo accion',
+          'CÓDIGO DE ACCIÓN','CODIGO DE ACCION','Código de acción','Codigo de accion'
+        ]) ||
+        pick(m,['ACCIÓN','ACCION','CÓDIGO ACCIÓN','CODIGO ACCION','CÓDIGO DE ACCIÓN','CODIGO DE ACCION']);
+      const courseValue=tutorCourseValue(raw,m);
+      let actionCode=(actionCodeValue(explicitAction)||mainCodeIn(courseValue)||fallbackCode||'').toUpperCase();
+      if(!/^C\d{4}$/.test(actionCode))continue;
+
+      let commissionCode=codeIn(courseValue);
+      if(!commissionCode && /^\d+$/.test(courseValue)){
+        commissionCode=actionCode+'-'+String(Number(courseValue));
+      }
+      const courseName=tutorCourseName(raw,m);
+      const names=tutorNamesFromRow(raw,m);
+      const dni=String(pick(m,['DNI'])||'').replace(/\.0$/,'').trim();
+      const date=isoDate(pickExact(raw,['FECHA','Fecha'])||pick(m,['FECHA','Fecha']),year);
+
+      for(const name of names){
+        parsed.push({
+          actionCode,
+          commissionCode:commissionCode||'',
+          courseName,
+          dni,
+          name,
+          date,
+          source,
+          sourceKind:options.sourceKind||'',
+          authoritative:options.authoritative===true
+        });
+      }
+    }
+    return parsed.filter(r=>/^C\d{4}$/.test(r.actionCode)&&idOf(r));
+  }
+
+  function tutorDedupeKey(r){
+    return [
+      r.actionCode,
+      canonicalCommissionKey(r.commissionCode||''),
+      normalize(r.courseName||''),
+      idOf(r),
+      r.date||'',
+      r.sourceKind||''
+    ].join('|');
   }
 
   function parseSupportBajaRows(rows,fallbackCode='',source=''){
@@ -938,38 +1035,106 @@
     }).filter(r=>/^C\d{4}$/.test(r.actionCode)&&idOf(r));
   }
 
+  function addTutorMapping(map,key,t){
+    if(!key)return;
+    if(!map.has(key))map.set(key,{master:[],other:[]});
+    const bucket=map.get(key);
+    const target=(t.sourceKind==='tutor_courses'||t.authoritative===true)?bucket.master:bucket.other;
+    target.push(t.name);
+  }
+
+  function tutorMapping(map,key){
+    const bucket=map.get(key);
+    if(!bucket)return null;
+    const master=unique(bucket.master||[]);
+    if(master.length)return {names:master,authoritative:true};
+    const other=unique(bucket.other||[]);
+    return other.length?{names:other,authoritative:false}:null;
+  }
+
+  function applyTutorValue(row,res){
+    const out={...row};
+    if(res?.authoritative){
+      if(out._tutorSource!=='master')out._tutorOriginal=String(out.tutor||'');
+      out.tutor=res.names.join(' · ');
+      out._tutorSource='master';
+      return out;
+    }
+    if(out._tutorSource==='master'){
+      out.tutor=String(out._tutorOriginal||'');
+      delete out._tutorOriginal;
+      delete out._tutorSource;
+    }
+    if(!String(out.tutor||'').trim() && res?.names?.length)out.tutor=res.names.join(' · ');
+    return out;
+  }
+
+  function applyProposalTutors(p,res){
+    const out={...p};
+    if(res?.authoritative){
+      if(out._tutorSource!=='master')out._tutorsOriginal=Array.isArray(out.tutors)?[...out.tutors]:[];
+      out.tutors=unique(res.names);
+      out._tutorSource='master';
+      return out;
+    }
+    if(out._tutorSource==='master'){
+      out.tutors=Array.isArray(out._tutorsOriginal)?[...out._tutorsOriginal]:[];
+      delete out._tutorsOriginal;
+      delete out._tutorSource;
+    }
+    if(!(out.tutors||[]).length && res?.names?.length)out.tutors=unique(res.names);
+    return out;
+  }
+
   function applyTutorsToDataset(){
-    const byAction=new Map(), byActionDate=new Map();
+    const byAction=new Map(), byActionDate=new Map(), byCommission=new Map(), byCourseName=new Map();
+
     for(const t of dataset.tutors||[]){
       if(!t.actionCode||!t.name)continue;
-      if(!byAction.has(t.actionCode))byAction.set(t.actionCode,[]);
-      byAction.get(t.actionCode).push(t.name);
-      if(t.date){
-        const k=t.actionCode+'|'+t.date;
-        if(!byActionDate.has(k))byActionDate.set(k,[]);
-        byActionDate.get(k).push(t.name);
+      const action=t.actionCode;
+      const commissionKey=canonicalCommissionKey(t.commissionCode||'');
+      const courseKey=normalize(t.courseName||'');
+
+      if(commissionKey){
+        addTutorMapping(byCommission,action+'|'+commissionKey,t);
+      }else if(courseKey){
+        addTutorMapping(byCourseName,action+'|'+courseKey,t);
+      }else if(t.date){
+        addTutorMapping(byActionDate,action+'|'+t.date,t);
+      }else{
+        addTutorMapping(byAction,action,t);
       }
     }
-    for(const [k,v] of byAction)byAction.set(k,unique(v));
-    for(const [k,v] of byActionDate)byActionDate.set(k,unique(v));
 
-    dataset.registrations=(dataset.registrations||[]).map(r=>{
-      if(String(r.tutor||'').trim())return r;
-      const names=byAction.get(r.actionCode)||[];
-      return names.length?{...r,tutor:names.join(' · ')}:r;
-    });
-    dataset.attendance=(dataset.attendance||[]).map(r=>{
-      if(String(r.tutor||'').trim())return r;
-      const exact=byActionDate.get(r.actionCode+'|'+(r.eventDate||''))||[];
-      const fallback=byAction.get(r.actionCode)||[];
-      const names=exact.length?exact:fallback;
-      return names.length?{...r,tutor:names.join(' · ')}:r;
-    });
-    dataset.proposals=(dataset.proposals||[]).map(p=>{
-      if((p.tutors||[]).length)return p;
-      const names=byAction.get(p.actionCode)||[];
-      return names.length?{...p,tutors:unique(names)}:p;
-    });
+    const resolveFor=(actionCode,{commissionCode='',courseName='',date=''}={})=>{
+      const ck=canonicalCommissionKey(commissionCode);
+      if(ck){
+        const hit=tutorMapping(byCommission,actionCode+'|'+ck);
+        if(hit)return hit;
+      }
+      const nk=normalize(courseName);
+      if(nk){
+        const hit=tutorMapping(byCourseName,actionCode+'|'+nk);
+        if(hit)return hit;
+      }
+      if(date){
+        const hit=tutorMapping(byActionDate,actionCode+'|'+date);
+        if(hit)return hit;
+      }
+      return tutorMapping(byAction,actionCode);
+    };
+
+    dataset.registrations=(dataset.registrations||[]).map(r=>
+      applyTutorValue(r,resolveFor(r.actionCode,{commissionCode:r.commissionCode}))
+    );
+
+    dataset.attendance=(dataset.attendance||[]).map(r=>
+      applyTutorValue(r,resolveFor(r.actionCode,{commissionCode:r.commissionCode,date:r.eventDate}))
+    );
+
+    dataset.proposals=(dataset.proposals||[]).map(p=>
+      applyProposalTutors(p,resolveFor(p.actionCode,{commissionCode:p.code,courseName:p.commission}))
+    );
   }
 
   function parseSupportWorkbook(file,wb){
@@ -997,7 +1162,7 @@
 
     for(const code of tutorCodes){
       dataset.tutors=dataset.tutors.filter(x=>x.actionCode!==code)
-        .concat(dedupe(parsed.tutors.filter(x=>x.actionCode===code),r=>[r.actionCode,idOf(r),r.date].join('|')));
+        .concat(dedupe(parsed.tutors.filter(x=>x.actionCode===code),tutorDedupeKey));
     }
     for(const code of bajaCodes){
       dataset.bajas=dataset.bajas.filter(x=>x.actionCode!==code)
@@ -1280,7 +1445,7 @@
     if(p.importInfo?.bajasOnly){
       dataset.bajas=dataset.bajas.filter(x=>x.actionCode!==code).concat(dedupe(p.bajas||[],r=>[r.actionCode,idOf(r),r.bajaDate,r.reason].join('|')));
       if(p.importInfo?.hasTutorSheet){
-        dataset.tutors=dataset.tutors.filter(x=>x.actionCode!==code).concat(dedupe(p.tutors||[],r=>[r.actionCode,idOf(r),r.date].join('|')));
+        dataset.tutors=dataset.tutors.filter(x=>x.actionCode!==code).concat(dedupe(p.tutors||[],tutorDedupeKey));
       }
       applyBajasToRegistrations(dataset.registrations.filter(x=>x.actionCode===code),dataset.bajas.filter(x=>x.actionCode===code));
     }else{
@@ -1291,7 +1456,7 @@
         dataset.bajas=dataset.bajas.filter(x=>x.actionCode!==code).concat(dedupe(p.bajas||[],r=>[r.actionCode,idOf(r),r.bajaDate,r.reason].join('|')));
       }
       if(p.importInfo?.hasTutorSheet){
-        dataset.tutors=dataset.tutors.filter(x=>x.actionCode!==code).concat(dedupe(p.tutors||[],r=>[r.actionCode,idOf(r),r.date].join('|')));
+        dataset.tutors=dataset.tutors.filter(x=>x.actionCode!==code).concat(dedupe(p.tutors||[],tutorDedupeKey));
       }
       applyBajasToRegistrations(dataset.registrations.filter(x=>x.actionCode===code),dataset.bajas.filter(x=>x.actionCode===code));
     }
@@ -2441,9 +2606,127 @@
     return '';
   }
 
+  function ensureTutorCourseSource(){
+    const sources=dataset.sources||[];
+    let src=sources.find(x=>x.sourceKind==='tutor_courses' || x.id===TUTOR_COURSE_SOURCE.id);
+    if(!src){
+      src={...TUTOR_COURSE_SOURCE,status:'pending_backend',lastSyncAt:null,createdAt:new Date().toISOString()};
+      dataset.sources=[...sources,src];
+    }else{
+      Object.assign(src,{
+        sourceKind:TUTOR_COURSE_SOURCE.sourceKind,
+        actionCode:TUTOR_COURSE_SOURCE.actionCode,
+        name:TUTOR_COURSE_SOURCE.name,
+        url:TUTOR_COURSE_SOURCE.url,
+        spreadsheetId:TUTOR_COURSE_SOURCE.spreadsheetId,
+        gid:TUTOR_COURSE_SOURCE.gid,
+        authMode:'backend_link',
+        intervalMinutes:5,
+        active:true,
+        locked:true
+      });
+    }
+    return src;
+  }
+
+  function tutorRowsFromWorkbook(wb,sourceName){
+    let best={score:-1,rows:[]};
+    for(const sheetName of wb.SheetNames||[]){
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{defval:'',raw:true});
+      if(!rows.length)continue;
+      const parsed=parseTutorRows(rows,'',sourceName,{sourceKind:'tutor_courses',authoritative:true});
+      if(!parsed.length)continue;
+      const specific=parsed.filter(x=>x.commissionCode||x.courseName).length;
+      const nameBoost=/tutor|capacit|curso|comision/i.test(normalize(sheetName))?10:0;
+      const score=parsed.length+(specific*4)+nameBoost;
+      if(score>best.score)best={score,rows};
+    }
+    return best.rows;
+  }
+
+  async function syncTutorCourseSource(src,{silent=false}={}){
+    if(!src || src.status==='syncing')return;
+    src.status='syncing';
+    src.authMode='backend_link';
+    src.lastSyncMessage='Leyendo tutores y cursos...';
+    renderSources();
+
+    try{
+      let rows=[];
+      let firstError=null;
+
+      try{
+        rows=await loadGvizSheet(src.spreadsheetId,{gid:src.gid});
+      }catch(e){
+        firstError=e;
+      }
+
+      let tutors=parseTutorRows(rows,'',src.name,{sourceKind:'tutor_courses',authoritative:true});
+
+      if(!tutors.length && remoteReady){
+        try{
+          const remote=await remoteRequest('fetch_sheet_xlsx',{spreadsheetId:src.spreadsheetId});
+          if(remote?.data){
+            const bytes=base64ToBytes(remote.data);
+            const wb=XLSX.read(bytes,{type:'array',cellDates:true});
+            const fallbackRows=tutorRowsFromWorkbook(wb,src.name);
+            tutors=parseTutorRows(fallbackRows,'',src.name,{sourceKind:'tutor_courses',authoritative:true});
+          }
+        }catch(e){
+          firstError=firstError||e;
+        }
+      }
+
+      if(!tutors.length){
+        throw firstError || new Error('No encontré filas con acción/curso y tutor o capacitador en la hoja configurada.');
+      }
+
+      const previousCodes=unique((dataset.tutors||[])
+        .filter(x=>x.sourceKind==='tutor_courses')
+        .map(x=>x.actionCode));
+      const newCodes=unique(tutors.map(x=>x.actionCode));
+      const affectedCodes=unique([...previousCodes,...newCodes]);
+
+      dataset.tutors=(dataset.tutors||[])
+        .filter(x=>x.sourceKind!=='tutor_courses')
+        .concat(dedupe(tutors,tutorDedupeKey));
+
+      applyTutorsToDataset();
+
+      src.status='ok';
+      src.lastSyncAt=new Date().toISOString();
+      src.lastSyncMessage=tutors.length+' asignación(es) de tutor/capacitador · '+newCodes.length+' acción(es)';
+      await saveState();
+
+      if(remoteReady){
+        for(const code of affectedCodes){
+          if(!dataset.actions.some(a=>a.code===code))continue;
+          try{await saveRemoteAction(code)}
+          catch(e){console.error('No se pudo persistir la asignación de tutores de '+code,e)}
+        }
+      }
+
+      renderAll();
+      if(!silent)toast('Tutores y cursos sincronizados.');
+    }catch(e){
+      console.error('Error sincronizando tutores y cursos',e);
+      src.status='error';
+      const msg=e?.message||'No se pudo sincronizar tutores y cursos.';
+      if(e?.code==='google_auth_required' || /requiere iniciar sesión|cualquier persona con el enlace|HTTP 401|HTTP 403/i.test(msg)){
+        src.lastSyncMessage='La hoja de tutores requiere acceso por enlace. Compartila como “Cualquier persona con el enlace”.';
+      }else{
+        src.lastSyncMessage=msg;
+      }
+      await saveState();
+      renderSources();
+      if(!silent)toast('No se pudieron sincronizar tutores y cursos.');
+    }
+  }
+
   async function syncSourceNow(sourceId,{silent=false}={}){
     const src=(dataset.sources||[]).find(x=>x.id===sourceId);
     if(!src || src.status==='syncing') return;
+    if(src.sourceKind==='tutor_courses')return syncTutorCourseSource(src,{silent});
     src.status='syncing';
     src.authMode='backend_link';
     src.lastSyncMessage='Leyendo Google Sheets desde backend...';
@@ -2518,14 +2801,15 @@
     $('#sourceTable').innerHTML=sources.slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')).map(s=>{
       const sid=s.spreadsheetId||spreadsheetIdFromUrl(s.url);
       const status=s.status||'pending_backend';
+      const globalSource=s.sourceKind==='tutor_courses';
       return `<tr>
-        <td><strong>${esc(s.actionCode||'—')}</strong></td>
+        <td><strong>${esc(globalSource?'GLOBAL':(s.actionCode||'—'))}</strong></td>
         <td><span class="source-name">${esc(s.name||'Google Sheet')}</span><span class="source-id">${esc(sid||s.url||'')}</span></td>
-        <td>${esc(sourceAuthLabel(s.authMode))}</td>
+        <td>${esc(globalSource?'Fuente maestra':sourceAuthLabel(s.authMode))}</td>
         <td>cada ${Number(s.intervalMinutes)||5} min</td>
         <td><span class="source-status ${status==='ok'?'ok':status==='error'?'error':'pending'}">${esc(sourceStatusLabel(status))}</span>${s.lastSyncMessage?`<span class="source-id" title="${esc(s.lastSyncMessage)}">${esc(s.lastSyncMessage)}</span>`:''}</td>
         <td>${s.lastSyncAt?new Date(s.lastSyncAt).toLocaleString('es-AR'):'—'}</td>
-        <td><button class="source-action-btn" data-sync-source="${esc(s.id)}">Sincronizar</button> <button class="source-action-btn" data-remove-source="${esc(s.id)}">Quitar</button></td>
+        <td><button class="source-action-btn" data-sync-source="${esc(s.id)}">Sincronizar</button>${globalSource?'':' <button class="source-action-btn" data-remove-source="'+esc(s.id)+'">Quitar</button>'}</td>
       </tr>`;
     }).join('') || '<tr><td colspan="7" class="empty">Todavía no registraste fuentes. Podés asociar el link de cada Google Sheet desde el formulario.</td></tr>';
 
@@ -2533,7 +2817,7 @@
     document.querySelectorAll('[data-remove-source]').forEach(btn=>btn.addEventListener('click',async()=>{
       const id=btn.dataset.removeSource;
       const src=(dataset.sources||[]).find(x=>x.id===id);
-      if(!src) return;
+      if(!src || src.sourceKind==='tutor_courses') return;
       if(!confirm(`¿Quitar la fuente ${src.actionCode||''} de esta configuración local?`)) return;
       dataset.sources=dataset.sources.filter(x=>x.id!==id);
       await saveState(); renderSources(); toast('Fuente quitada de la prueba local');
@@ -2601,14 +2885,14 @@
     areaClass:'Área clasificada',cargo:'Cargo',cargoClass:'Cargo clasificado',formation:'Formación',
     venue:'Sede',shift:'Turno',tutor:'Tutor / capacitador',registrationDate:'Fecha de inscripción',
     encounter:'Encuentro',eventDate:'Fecha de encuentro',capturedAt:'Fecha del registro',
-    reason:'Motivo / observación',date:'Fecha',source:'Fuente',capacity:'Cupo',
+    reason:'Motivo / observación',date:'Fecha',courseName:'Curso / comisión',source:'Fuente',capacity:'Cupo',
     registeredReported:'Inscriptos informados',tutors:'Tutores / capacitadores',meetings:'Encuentros'
   };
   const PREFERRED_FIELDS={
     registrations:['dni','surname','firstName','name','email','commissionCode','school','cue','cueAnexo','dependency','sector','comuna','status','statusDate','bajaDate','region','area','areaClass','cargo','cargoClass','formation','venue','shift','tutor','registrationDate','source'],
     attendance:['dni','surname','firstName','name','email','commissionCode','encounter','eventDate','capturedAt','school','cue','cueAnexo','dependency','sector','comuna','status','region','area','areaClass','cargo','cargoClass','formation','venue','shift','tutor','source'],
     bajas:['dni','surname','firstName','name','email','commissionCode','bajaDate','school','cue','cueAnexo','dependency','sector','comuna','status','reason','source'],
-    tutors:['dni','name','date','source'],
+    tutors:['dni','name','commissionCode','courseName','date','source'],
     proposals:['code','commission','area','areaClass','formation','venue','shift','capacity','registeredReported','tutors','meetings']
   };
   let editorState={recordRef:null,isNew:false,reportRows:[],reportColumns:[]};
@@ -2644,7 +2928,7 @@
     if(type==='registrations')return [row.actionCode,row.commissionCode,idOf(row)].join('|');
     if(type==='attendance')return [row.actionCode,row.commissionCode,idOf(row),row.encounter,row.eventDate,row.capturedAt].join('|');
     if(type==='bajas')return [row.actionCode,idOf(row),row.bajaDate,row.reason].join('|');
-    if(type==='tutors')return [row.actionCode,idOf(row),row.date].join('|');
+    if(type==='tutors')return tutorDedupeKey(row);
     if(type==='proposals')return [row.actionCode,row.code||row.commission].join('|');
     return [row?.actionCode,JSON.stringify(row||{})].join('|');
   }
@@ -3590,6 +3874,8 @@
     await loadState();
     renderAll();
     const loaded=await initRemotePersistence();
+    ensureTutorCourseSource();
+    await saveState();
     renderAll();
     if(loaded)startSourceAutoSync();
     if(!dataset.actions.length) switchView('imports');

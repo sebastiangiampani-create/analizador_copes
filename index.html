@@ -25,6 +25,7 @@
         <button class="nav-item" data-view="imports"><span class="nav-icon">⇧</span><span>Cargar bases</span></button>
         <button class="nav-item" data-view="sources"><span class="nav-icon">↻</span><span>Fuentes</span></button>
         <button class="nav-item" data-view="tutors"><span class="nav-icon">◎</span><span>Tutores</span></button>
+        <button class="nav-item" data-view="editor"><span class="nav-icon">✎</span><span>Correcciones</span></button>
         <button class="nav-item" data-view="reports"><span class="nav-icon">▤</span><span>Informes</span></button>
         <button class="nav-item" data-view="detail"><span class="nav-icon">≡</span><span>Detalle</span></button>
       </nav>
@@ -478,6 +479,58 @@
       </section>
 
 
+      <section id="view-editor" class="view">
+        <div class="page-intro">
+          <span class="section-kicker">CORRECCIONES</span>
+          <h2>Editar datos cargados</h2>
+          <p>Corregí fechas y campos puntuales sin tener que volver a preparar el Excel. La acción y las claves internas permanecen fijas para no romper los cruces.</p>
+        </div>
+
+        <article class="panel editor-toolbar">
+          <div class="editor-controls">
+            <label class="field">
+              <span>Acción</span>
+              <select id="editorAction"></select>
+            </label>
+            <label class="field">
+              <span>Base</span>
+              <select id="editorDataset">
+                <option value="registrations">Personas / inscripciones</option>
+                <option value="attendance">Asistencias</option>
+                <option value="bajas">Bajas</option>
+                <option value="tutors">Tutores / capacitadores</option>
+                <option value="proposals">Comisiones / propuestas</option>
+              </select>
+            </label>
+            <label class="field editor-search-field">
+              <span>Buscar registro</span>
+              <input id="editorSearch" type="search" autocomplete="off" placeholder="DNI, nombre, escuela, comisión, fecha..." />
+            </label>
+          </div>
+          <div class="editor-status-line">
+            <span id="editorCount">0 registros</span>
+            <span>Las correcciones se guardan online. Si volvés a importar la acción, se vuelven a aplicar sobre la nueva base cuando el registro coincide.</span>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h3>Registros</h3>
+              <p>Elegí “Editar” para abrir todos los campos disponibles del registro.</p>
+            </div>
+            <span class="panel-chip">Corrección manual</span>
+          </div>
+          <div class="table-scroll editor-table-scroll">
+            <table class="editor-table">
+              <thead id="editorTableHead"></thead>
+              <tbody id="editorTableBody"><tr><td class="empty">Seleccioná una acción.</td></tr></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+
       <section id="view-reports" class="view">
         <div class="page-intro">
           <span class="section-kicker">INFORMES</span>
@@ -611,6 +664,29 @@
   </div>
 
   <div id="reportPrintRoot" class="report-print-root" aria-hidden="true"></div>
+
+  <div id="editorRecordModal" class="storage-modal" hidden>
+    <div class="storage-modal-card editor-record-card">
+      <div class="modal-head">
+        <div>
+          <span class="section-kicker">CORRECCIÓN DE REGISTRO</span>
+          <h3 id="editorRecordTitle">Editar registro</h3>
+        </div>
+        <button id="editorRecordClose" type="button" class="modal-x" aria-label="Cerrar">×</button>
+      </div>
+      <p class="editor-record-help">Podés modificar todos los campos disponibles. Las fechas se editan con selector de fecha. La acción no se modifica desde acá.</p>
+      <form id="editorRecordForm">
+        <div id="editorRecordFields" class="editor-record-fields"></div>
+        <div class="storage-modal-actions editor-modal-actions">
+          <button id="editorDeleteRecord" type="button" class="btn danger" hidden>Eliminar</button>
+          <button id="editorRestoreRecord" type="button" class="btn ghost" hidden>Restaurar original</button>
+          <span class="modal-spacer"></span>
+          <button id="editorRecordCancel" type="button" class="btn ghost">Cancelar</button>
+          <button type="submit" class="btn primary">Guardar corrección</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <div id="storageModal" class="storage-modal" hidden>
     <div class="storage-modal-card">

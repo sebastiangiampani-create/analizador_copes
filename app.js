@@ -2,7 +2,7 @@
   const DB_NAME = 'analizador_copes_v1';
   const STORE = 'state';
   const KEY = 'dataset';
-  const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], bajas: [], tutors: [], imports: [], sources: [], savedFilters: [], customFields: [], masters:{schools:[],areas:[],cargos:[]} };
+  const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], bajas: [], tutors: [], imports: [], sources: [], manualTutorCatalog: [], manualTutorAssignments: [], savedFilters: [], customFields: [], masters:{schools:[],areas:[],cargos:[]} };
   const REMOTE_ENDPOINT = 'https://qchnawvoensqnynsuhfu.supabase.co/functions/v1/copes-state';
   const REMOTE_KEY_STORAGE = 'analizador_copes_workspace_key_v1';
   const TUTOR_COURSE_SOURCE={
@@ -178,6 +178,8 @@
     if(!Array.isArray(dataset.bajas)) dataset.bajas=[];
     if(!Array.isArray(dataset.tutors)) dataset.tutors=[];
     if(!Array.isArray(dataset.sources)) dataset.sources=[];
+    if(!Array.isArray(dataset.manualTutorCatalog)) dataset.manualTutorCatalog=[];
+    if(!Array.isArray(dataset.manualTutorAssignments)) dataset.manualTutorAssignments=[];
     dataset.savedFilters=[];
     dataset.customFields=[];
     if(!dataset.masters || typeof dataset.masters!=='object') dataset.masters={schools:[],areas:[],cargos:[]};
@@ -420,6 +422,8 @@
     if(!remoteReady)return;
     await remoteRequest('save_config',{payload:{
       sources:dataset.sources||[],
+      manualTutorCatalog:dataset.manualTutorCatalog||[],
+      manualTutorAssignments:dataset.manualTutorAssignments||[],
       savedFilters:[],
       customFields:[],
       chartPrefs,
@@ -456,6 +460,8 @@
   async function initRemotePersistenceCore(){
     const localSnapshots=(dataset.actions||[]).map(a=>buildActionSnapshot(a.code)).filter(Boolean);
     const localSources=structuredClone(dataset.sources||[]);
+    const localManualTutorCatalog=structuredClone(dataset.manualTutorCatalog||[]);
+    const localManualTutorAssignments=structuredClone(dataset.manualTutorAssignments||[]);
 
     const connected=await ensureRemoteAccess({interactive:true});
     if(!connected){
@@ -484,13 +490,31 @@
 
       {
         const mergedSources=Array.isArray(remote.config?.sources)&&remote.config.sources.length ? remote.config.sources : localSources;
+        const mergedManualTutorCatalog=Array.isArray(remote.config?.manualTutorCatalog)
+          ? remote.config.manualTutorCatalog
+          : localManualTutorCatalog;
+        const mergedManualTutorAssignments=Array.isArray(remote.config?.manualTutorAssignments)
+          ? remote.config.manualTutorAssignments
+          : localManualTutorAssignments;
+        const mergedChartPrefs=(remote.config?.chartPrefs && typeof remote.config.chartPrefs==='object')?remote.config.chartPrefs:chartPrefs;
+        const mergedReportDraft=(remote.config?.reportDraft && typeof remote.config.reportDraft==='object')?remote.config.reportDraft:reportDraft;
         await remoteRequest('save_config',{payload:{
           sources:mergedSources,
+          manualTutorCatalog:mergedManualTutorCatalog,
+          manualTutorAssignments:mergedManualTutorAssignments,
           savedFilters:[],
           customFields:[],
-          chartPrefs:(remote.config?.chartPrefs && typeof remote.config.chartPrefs==='object')?remote.config.chartPrefs:chartPrefs,
-          reportDraft:(remote.config?.reportDraft && typeof remote.config.reportDraft==='object')?remote.config.reportDraft:reportDraft
+          chartPrefs:mergedChartPrefs,
+          reportDraft:mergedReportDraft
         }});
+        remote.config={
+          ...(remote.config||{}),
+          sources:mergedSources,
+          manualTutorCatalog:mergedManualTutorCatalog,
+          manualTutorAssignments:mergedManualTutorAssignments,
+          chartPrefs:mergedChartPrefs,
+          reportDraft:mergedReportDraft
+        };
       }
 
       if(migrated) remote=await remoteRequest('load_index');
@@ -498,6 +522,8 @@
       const actionIndex=remote.actions||[];
       dataset=structuredClone(EMPTY);
       dataset.sources=Array.isArray(remote.config?.sources)?remote.config.sources:[];
+      dataset.manualTutorCatalog=Array.isArray(remote.config?.manualTutorCatalog)?remote.config.manualTutorCatalog:[];
+      dataset.manualTutorAssignments=Array.isArray(remote.config?.manualTutorAssignments)?remote.config.manualTutorAssignments:[];
       dataset.savedFilters=[];
       dataset.customFields=[];
       if(remote.config?.chartPrefs && typeof remote.config.chartPrefs==='object'){
@@ -1086,7 +1112,50 @@
     return out;
   }
 
+  function clearManualTutorLayer(){
+    dataset.registrations=(dataset.registrations||[]).map(r=>{
+      if(r?._tutorSource!=='manual')return r;
+      const out={...r,tutor:String(r._tutorOriginal||'')};
+      delete out._tutorOriginal; delete out._tutorSource;
+      return out;
+    });
+    dataset.attendance=(dataset.attendance||[]).map(r=>{
+      if(r?._tutorSource!=='manual')return r;
+      const out={...r,tutor:String(r._tutorOriginal||'')};
+      delete out._tutorOriginal; delete out._tutorSource;
+      return out;
+    });
+    dataset.proposals=(dataset.proposals||[]).map(p=>{
+      if(p?._tutorSource!=='manual')return p;
+      const out={...p,tutors:Array.isArray(p._tutorsOriginal)?[...p._tutorsOriginal]:[]};
+      delete out._tutorsOriginal; delete out._tutorSource;
+      return out;
+    });
+  }
+
+  function manualTutorMapping(map,key,name){
+    if(!key||!name)return;
+    if(!map.has(key))map.set(key,[]);
+    map.get(key).push(name);
+  }
+
+  function manualTutorNames(map,key){
+    return unique(map.get(key)||[]);
+  }
+
+  function applyManualTutorValue(row,names){
+    if(!names?.length || String(row?.tutor||'').trim())return row;
+    return {...row,_tutorOriginal:String(row?.tutor||''),tutor:unique(names).join(' · '),_tutorSource:'manual'};
+  }
+
+  function applyManualProposalTutors(row,names){
+    if(!names?.length || (row?.tutors||[]).length)return row;
+    return {...row,_tutorsOriginal:Array.isArray(row?.tutors)?[...row.tutors]:[],tutors:unique(names),_tutorSource:'manual'};
+  }
+
   function applyTutorsToDataset(){
+    clearManualTutorLayer();
+
     const byAction=new Map(), byActionDate=new Map(), byCommission=new Map(), byCourseName=new Map();
 
     for(const t of dataset.tutors||[]){
@@ -1124,17 +1193,46 @@
       return tutorMapping(byAction,actionCode);
     };
 
-    dataset.registrations=(dataset.registrations||[]).map(r=>
-      applyTutorValue(r,resolveFor(r.actionCode,{commissionCode:r.commissionCode}))
-    );
+    // Manual es fallback: sólo entra cuando no hay una asignación automática válida.
+    const manualByAction=new Map(), manualByCommission=new Map(), manualByCourseName=new Map();
+    for(const a of dataset.manualTutorAssignments||[]){
+      if(!/^C\d{4}$/.test(a?.actionCode||'') || !String(a?.tutorName||'').trim())continue;
+      const name=String(a.tutorName).trim();
+      const ck=canonicalCommissionKey(a.commissionCode||'');
+      const nk=normalize(a.courseName||'');
+      if(ck)manualTutorMapping(manualByCommission,a.actionCode+'|'+ck,name);
+      else if(nk)manualTutorMapping(manualByCourseName,a.actionCode+'|'+nk,name);
+      else manualTutorMapping(manualByAction,a.actionCode,name);
+    }
 
-    dataset.attendance=(dataset.attendance||[]).map(r=>
-      applyTutorValue(r,resolveFor(r.actionCode,{commissionCode:r.commissionCode,date:r.eventDate}))
-    );
+    const resolveManual=(actionCode,{commissionCode='',courseName=''}={})=>{
+      const ck=canonicalCommissionKey(commissionCode);
+      if(ck){
+        const names=manualTutorNames(manualByCommission,actionCode+'|'+ck);
+        if(names.length)return names;
+      }
+      const nk=normalize(courseName);
+      if(nk){
+        const names=manualTutorNames(manualByCourseName,actionCode+'|'+nk);
+        if(names.length)return names;
+      }
+      return manualTutorNames(manualByAction,actionCode);
+    };
 
-    dataset.proposals=(dataset.proposals||[]).map(p=>
-      applyProposalTutors(p,resolveFor(p.actionCode,{commissionCode:p.code,courseName:p.commission}))
-    );
+    dataset.registrations=(dataset.registrations||[]).map(r=>{
+      const automatic=applyTutorValue(r,resolveFor(r.actionCode,{commissionCode:r.commissionCode}));
+      return applyManualTutorValue(automatic,resolveManual(r.actionCode,{commissionCode:r.commissionCode}));
+    });
+
+    dataset.attendance=(dataset.attendance||[]).map(r=>{
+      const automatic=applyTutorValue(r,resolveFor(r.actionCode,{commissionCode:r.commissionCode,date:r.eventDate}));
+      return applyManualTutorValue(automatic,resolveManual(r.actionCode,{commissionCode:r.commissionCode}));
+    });
+
+    dataset.proposals=(dataset.proposals||[]).map(p=>{
+      const automatic=applyProposalTutors(p,resolveFor(p.actionCode,{commissionCode:p.code,courseName:p.commission}));
+      return applyManualProposalTutors(automatic,resolveManual(p.actionCode,{commissionCode:p.code,courseName:p.commission}));
+    });
   }
 
   function parseSupportWorkbook(file,wb){
@@ -3416,8 +3514,224 @@
       '</tbody></table></section>';
   }
 
+  function splitTutorDisplay(value=''){
+    return unique(String(value||'').split(/\s*[·;\n]\s*/).map(x=>x.trim()).filter(Boolean));
+  }
+
+  function discoveredTutorPeople(){
+    const map=new Map();
+    const add=(name,origin='Automático')=>{
+      const clean=String(name||'').trim(); if(!clean)return;
+      const key=normalize(clean); if(!key)return;
+      if(!map.has(key))map.set(key,{key:'auto:'+key,name:clean,dni:'',email:'',origin});
+    };
+    for(const t of dataset.tutors||[])add(t.name,t.sourceKind==='tutor_courses'?'Planilla maestra':'Automático');
+    for(const r of dataset.registrations||[])splitTutorDisplay(r.tutor).forEach(n=>add(n));
+    for(const r of dataset.attendance||[])splitTutorDisplay(r.tutor).forEach(n=>add(n));
+    for(const p of dataset.proposals||[])(p.tutors||[]).forEach(n=>add(n));
+    return [...map.values()];
+  }
+
+  function tutorPeopleCatalog(){
+    const automatic=discoveredTutorPeople();
+    const byName=new Map(automatic.map(x=>[normalize(x.name),x]));
+    for(const p of dataset.manualTutorCatalog||[]){
+      const name=String(p?.name||'').trim(); if(!name)continue;
+      const key=normalize(name);
+      byName.set(key,{
+        key:'manual:'+p.id,
+        id:p.id,
+        name,
+        dni:String(p.dni||''),
+        email:String(p.email||''),
+        origin:'Manual',
+        manual:true
+      });
+    }
+    return [...byName.values()].sort((a,b)=>a.name.localeCompare(b.name,'es',{sensitivity:'base'}));
+  }
+
+  function actionCommissionOptions(actionCode){
+    const map=new Map();
+    for(const p of dataset.proposals||[]){
+      if(p.actionCode!==actionCode)continue;
+      const code=String(p.code||'').trim();
+      const name=String(p.commission||'').trim();
+      const key=code||name; if(!key)continue;
+      map.set(key,{code,name,label:[code,name&&name!==code?name:''].filter(Boolean).join(' · ')});
+    }
+    for(const r of dataset.registrations||[]){
+      if(r.actionCode!==actionCode)continue;
+      const code=String(r.commissionCode||'').trim(); if(!code)continue;
+      if(!map.has(code))map.set(code,{code,name:'',label:code});
+    }
+    for(const r of dataset.attendance||[]){
+      if(r.actionCode!==actionCode)continue;
+      const code=String(r.commissionCode||'').trim(); if(!code)continue;
+      if(!map.has(code))map.set(code,{code,name:'',label:code});
+    }
+    return [...map.values()].sort((a,b)=>a.label.localeCompare(b.label,'es',{numeric:true,sensitivity:'base'}));
+  }
+
+  function renderManualTutorCommissionOptions(){
+    const action=$('#manualTutorAction')?.value||'';
+    const select=$('#manualTutorCommission'); if(!select)return;
+    const old=select.value;
+    const options=actionCommissionOptions(action);
+    select.innerHTML='<option value="">Toda la acción</option>'+options.map(o=>
+      '<option value="'+esc(o.code)+'" data-course-name="'+esc(o.name)+'">'+esc(o.label)+'</option>'
+    ).join('');
+    if(options.some(o=>o.code===old))select.value=old;
+  }
+
+  function renderTutorAdmin(){
+    if(!$('#view-tutors'))return;
+    if(!Array.isArray(dataset.manualTutorCatalog))dataset.manualTutorCatalog=[];
+    if(!Array.isArray(dataset.manualTutorAssignments))dataset.manualTutorAssignments=[];
+
+    const people=tutorPeopleCatalog();
+    const actions=(dataset.actions||[]).slice().sort((a,b)=>a.code.localeCompare(b.code,'es',{numeric:true}));
+
+    if($('#tutorPeopleCount'))$('#tutorPeopleCount').textContent=people.length.toLocaleString('es-AR');
+    if($('#tutorAssignmentCount'))$('#tutorAssignmentCount').textContent=(dataset.manualTutorAssignments||[]).length.toLocaleString('es-AR');
+    if($('#tutorActionCount'))$('#tutorActionCount').textContent=new Set((dataset.manualTutorAssignments||[]).map(x=>x.actionCode)).size.toLocaleString('es-AR');
+
+    const actionSel=$('#manualTutorAction');
+    if(actionSel){
+      const old=actionSel.value;
+      actionSel.innerHTML='<option value="">Seleccionar acción...</option>'+actions.map(a=>
+        '<option value="'+esc(a.code)+'">'+esc(a.code+' · '+(a.title||a.code))+'</option>'
+      ).join('');
+      if(actions.some(a=>a.code===old))actionSel.value=old;
+    }
+    renderManualTutorCommissionOptions();
+
+    const peopleSel=$('#manualTutorPeople');
+    if(peopleSel){
+      const selected=new Set([...peopleSel.selectedOptions].map(o=>o.value));
+      peopleSel.innerHTML=people.map(p=>
+        '<option value="'+esc(p.key)+'" '+(selected.has(p.key)?'selected':'')+'>'+esc(p.name+(p.origin==='Manual'?' · manual':' · detectado'))+'</option>'
+      ).join('');
+    }
+
+    const catalog=$('#manualTutorCatalogTable');
+    if(catalog){
+      catalog.innerHTML=people.map(p=>'<tr>'+
+        '<td><strong>'+esc(p.name)+'</strong>'+(p.email?'<div class="source-id">'+esc(p.email)+'</div>':'')+'</td>'+
+        '<td>'+esc(p.dni||'—')+'</td>'+
+        '<td><span class="badge">'+esc(p.origin)+'</span></td>'+
+        '<td>'+(p.manual?'<button type="button" class="source-action-btn" data-remove-manual-tutor="'+esc(p.id)+'">Quitar</button>':'')+'</td>'+
+      '</tr>').join('')||'<tr><td colspan="4" class="empty">Todavía no hay tutores detectados ni cargados.</td></tr>';
+    }
+
+    const rows=(dataset.manualTutorAssignments||[]).slice().sort((a,b)=>
+      String(a.actionCode).localeCompare(String(b.actionCode),'es',{numeric:true}) ||
+      String(a.commissionCode||'').localeCompare(String(b.commissionCode||''),'es',{numeric:true}) ||
+      String(a.tutorName||'').localeCompare(String(b.tutorName||''),'es')
+    );
+    const host=$('#manualTutorAssignmentsTable');
+    if(host){
+      host.innerHTML=rows.map(a=>'<tr>'+
+        '<td><strong>'+esc(a.actionCode)+'</strong></td>'+
+        '<td>'+esc(a.commissionCode||a.courseName||'Toda la acción')+'</td>'+
+        '<td>'+esc(a.tutorName||'—')+'</td>'+
+        '<td><span class="badge">Manual</span></td>'+
+        '<td><button type="button" class="source-action-btn" data-remove-tutor-assignment="'+esc(a.id)+'">Quitar</button></td>'+
+      '</tr>').join('')||'<tr><td colspan="5" class="empty">No hay asignaciones manuales. Si la fuente automática ya trae tutores, no hace falta cargar nada acá.</td></tr>';
+    }
+  }
+
+  async function persistTutorAdmin(){
+    applyTutorsToDataset();
+    await saveState();
+    if(remoteReady)await saveRemoteConfig();
+    renderAll();
+    switchView('tutors');
+  }
+
+  async function addManualTutor(e){
+    e.preventDefault();
+    const name=String($('#manualTutorName')?.value||'').trim();
+    const dni=cleanDni($('#manualTutorDni')?.value||'');
+    const email=String($('#manualTutorEmail')?.value||'').trim();
+    if(!name){toast('Ingresá el nombre del tutor.');return}
+
+    const exists=tutorPeopleCatalog().some(p=>
+      normalize(p.name)===normalize(name) || (dni&&cleanDni(p.dni)===dni)
+    );
+    if(exists){toast('Ese tutor ya está disponible en el catálogo.');return}
+
+    dataset.manualTutorCatalog.push({
+      id:globalThis.crypto?.randomUUID?.()||('tutor-'+Date.now()),
+      name,dni,email,createdAt:new Date().toISOString()
+    });
+    $('#manualTutorForm')?.reset();
+    try{
+      await persistTutorAdmin();
+      toast('Tutor agregado al catálogo.');
+    }catch(err){
+      console.error(err);toast('El tutor quedó localmente, pero no se pudo verificar el guardado online.');
+    }
+  }
+
+  async function assignManualTutors(e){
+    e.preventDefault();
+    const actionCode=$('#manualTutorAction')?.value||'';
+    if(!/^C\d{4}$/.test(actionCode)){toast('Seleccioná una acción.');return}
+    const people=tutorPeopleCatalog();
+    const byKey=new Map(people.map(p=>[p.key,p]));
+    const selected=[...($('#manualTutorPeople')?.selectedOptions||[])].map(o=>byKey.get(o.value)).filter(Boolean);
+    if(!selected.length){toast('Seleccioná al menos un tutor.');return}
+
+    const commissionSelect=$('#manualTutorCommission');
+    const commissionCode=String(commissionSelect?.value||'').trim();
+    const courseName=commissionSelect?.selectedOptions?.[0]?.dataset?.courseName||'';
+    const existing=new Set((dataset.manualTutorAssignments||[]).map(a=>
+      [a.actionCode,canonicalCommissionKey(a.commissionCode||''),normalize(a.courseName||''),normalize(a.tutorName||'')].join('|')
+    ));
+    let added=0;
+    for(const p of selected){
+      const key=[actionCode,canonicalCommissionKey(commissionCode),normalize(courseName),normalize(p.name)].join('|');
+      if(existing.has(key))continue;
+      dataset.manualTutorAssignments.push({
+        id:globalThis.crypto?.randomUUID?.()||('assign-'+Date.now()+'-'+Math.random().toString(36).slice(2)),
+        actionCode,
+        commissionCode,
+        courseName,
+        tutorId:p.id||p.key,
+        tutorName:p.name,
+        createdAt:new Date().toISOString()
+      });
+      existing.add(key); added++;
+    }
+    if(!added){toast('Esas asignaciones ya existían.');return}
+
+    try{
+      await persistTutorAdmin();
+      toast(added===1?'Tutor asignado.':added+' tutores asignados.');
+    }catch(err){
+      console.error(err);toast('La asignación quedó localmente, pero no se pudo verificar el guardado online.');
+    }
+  }
+
+  async function removeManualTutor(id){
+    const person=(dataset.manualTutorCatalog||[]).find(x=>x.id===id); if(!person)return;
+    const linked=(dataset.manualTutorAssignments||[]).filter(x=>x.tutorId===id || normalize(x.tutorName)===normalize(person.name));
+    if(!confirm('¿Quitar a '+person.name+' del catálogo manual?'+(linked.length?' También se quitarán '+linked.length+' asignación(es) manual(es).':'')))return;
+    dataset.manualTutorCatalog=dataset.manualTutorCatalog.filter(x=>x.id!==id);
+    dataset.manualTutorAssignments=dataset.manualTutorAssignments.filter(x=>x.tutorId!==id && normalize(x.tutorName)!==normalize(person.name));
+    try{await persistTutorAdmin();toast('Tutor manual quitado.')}catch(err){console.error(err);toast('Cambio local realizado; no se pudo verificar Supabase.')}
+  }
+
+  async function removeManualTutorAssignment(id){
+    if(!(dataset.manualTutorAssignments||[]).some(x=>x.id===id))return;
+    dataset.manualTutorAssignments=dataset.manualTutorAssignments.filter(x=>x.id!==id);
+    try{await persistTutorAdmin();toast('Asignación manual quitada.')}catch(err){console.error(err);toast('Cambio local realizado; no se pudo verificar Supabase.')}
+  }
+
   function renderAll(){
-    refreshFilterOptions(); renderImportResults(); renderSources(); applyFilters();
+    applyTutorsToDataset();
+    refreshFilterOptions(); renderImportResults(); renderSources(); renderTutorAdmin(); applyFilters();
     initChartControls(); initReportPickers(); renderCustomReportConfigurator(); renderReportBuilder();
   }
 
@@ -3426,6 +3740,7 @@
     document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
     $('#view-'+name)?.classList.add('active');
     document.querySelector(`.nav-item[data-view="${name}"]`)?.classList.add('active');
+    if(name==='tutors')renderTutorAdmin();
     if(name==='reports'){
       renderCustomReportConfigurator();
       renderReportBuilder();
@@ -3865,6 +4180,17 @@
     $('#sourceForm')?.addEventListener('submit',saveSourceFromForm);
     $('#sourceAction')?.addEventListener('input',e=>{e.target.value=e.target.value.toUpperCase().replace(/[^C0-9 _-]/g,'').slice(0,8)});
     $('#sourceAction')?.addEventListener('change',e=>{const c=actionCodeValue(e.target.value);if(c)e.target.value=c});
+    $('#manualTutorForm')?.addEventListener('submit',addManualTutor);
+    $('#manualTutorAssignmentForm')?.addEventListener('submit',assignManualTutors);
+    $('#manualTutorAction')?.addEventListener('change',renderManualTutorCommissionOptions);
+    $('#manualTutorCatalogTable')?.addEventListener('click',e=>{
+      const btn=e.target.closest('[data-remove-manual-tutor]');
+      if(btn)removeManualTutor(btn.dataset.removeManualTutor);
+    });
+    $('#manualTutorAssignmentsTable')?.addEventListener('click',e=>{
+      const btn=e.target.closest('[data-remove-tutor-assignment]');
+      if(btn)removeManualTutorAssignment(btn.dataset.removeTutorAssignment);
+    });
   }
 
   async function init(){

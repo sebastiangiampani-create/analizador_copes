@@ -897,11 +897,13 @@
       out.cueAnexo=cleanCueAnexo(master.cueanexo)||out.cueAnexo||'';
       out.sector=master.sector||out.sector||'';
       out.comuna=master.departamento||out.comuna||'';
+      out.dependency=String(out.dependency||'').trim() || String(master.dependency||'').trim() || parseDependencyFromSchool(out.schoolRaw||out.school||'');
       out.masterSchoolMatched=true;
     }else{
       out.cueAnexo=cleanCueAnexo(out.cueAnexo)||extractCueAnexo(out.schoolRaw||out.school||'');
       out.cue=cleanCue(out.cue)||cleanCue(out.cueAnexo);
       out.school=cleanSchool(out.schoolRaw||out.school||'')||out.school||'';
+      out.dependency=String(out.dependency||'').trim() || parseDependencyFromSchool(out.schoolRaw||out.school||'');
       out.masterSchoolMatched=false;
     }
     out.areaClass=classifyArea(out.area)||out.areaClass||'';
@@ -916,7 +918,8 @@
       const schoolDone=Object.prototype.hasOwnProperty.call(r||{},'masterSchoolMatched');
       const areaDone=Object.prototype.hasOwnProperty.call(r||{},'areaClass');
       const cargoDone=Object.prototype.hasOwnProperty.call(r||{},'cargoClass');
-      return schoolDone&&areaDone&&cargoDone ? r : enrichMasterRow(r,idx);
+      const dependencyDone=String(r?.dependency||'').trim()!=='';
+      return schoolDone&&areaDone&&cargoDone&&dependencyDone ? r : enrichMasterRow(r,idx);
     };
     dataset.registrations=(dataset.registrations||[]).map(enrichIfNeeded);
     dataset.attendance=(dataset.attendance||[]).map(enrichIfNeeded);
@@ -1394,7 +1397,7 @@
         school:cleanSchool(schoolRaw),
         cueAnexo,
         cue:String(pick(m,['CUE','Codigo CUE','Código CUE'])||cleanCue(cueAnexo)||'').trim(),
-        dependency:String(pick(m,['DEPENDENCIA','Dependencia','Dep. Fun'])||parseDependencyFromSchool(schoolRaw)||'').trim(),
+        dependency:String(pick(m,['DEPENDENCIA','Dependencia','Dep. Fun'])||'').trim(),
         sector:String(pick(m,['SECTOR DE GESTIÓN','Sector de Gestión','Sector de Gestion','Sector Gestión'])||inferSectorFromSchool(schoolRaw)||'').trim(),
         comuna:String(pick(m,['COMUNA','Comuna'])||'').trim(),
         status:statusNorm(pick(m,['ESTADO','Estado'])||'Activo'),
@@ -1442,7 +1445,7 @@
         school:cleanSchool(schoolRaw),
         cueAnexo,
         cue:String(pick(m,['CUE','Codigo CUE','Código CUE'])||cleanCue(cueAnexo)||'').trim(),
-        dependency:String(pick(m,['DEPENDENCIA','Dependencia','Dep. Fun'])||parseDependencyFromSchool(schoolRaw)||'').trim(),
+        dependency:String(pick(m,['DEPENDENCIA','Dependencia','Dep. Fun'])||'').trim(),
         sector:String(pick(m,['SECTOR DE GESTIÓN','Sector de Gestión','Sector de Gestion','Sector Gestión'])||inferSectorFromSchool(schoolRaw)||'').trim(),
         comuna:String(pick(m,['COMUNA','Comuna'])||'').trim(),
         status:statusNorm(pick(m,['ESTADO','Estado'])||''),
@@ -1482,7 +1485,7 @@
         school:cleanSchool(schoolRaw),
         cueAnexo,
         cue:String(pick(m,['CUE','Codigo CUE','Código CUE'])||cleanCue(cueAnexo)||'').trim(),
-        dependency:String(pick(m,['DEPENDENCIA','Dependencia','Dep. Fun'])||parseDependencyFromSchool(schoolRaw)||'').trim(),
+        dependency:String(pick(m,['DEPENDENCIA','Dependencia','Dep. Fun'])||'').trim(),
         sector:String(pick(m,['SECTOR DE GESTIÓN','Sector de Gestión','Sector de Gestion','Sector Gestión'])||inferSectorFromSchool(schoolRaw)||'').trim(),
         comuna:String(pick(m,['COMUNA','Comuna'])||'').trim(),
         status:'Baja',
@@ -1956,18 +1959,19 @@
     const selectedActions=multiFilterValues('filterAction');
     const actionSet=new Set(selectedActions);
     const regs=selectedActions.length ? dataset.registrations.filter(x=>actionSet.has(x.actionCode)) : dataset.registrations;
-    const props=selectedActions.length ? dataset.proposals.filter(x=>actionSet.has(x.actionCode)) : dataset.proposals;
-    setMultiFilterOptions('filterSchool',regs.map(x=>x.school));
-    setMultiFilterOptions('filterDependency',regs.map(x=>x.dependency));
-    setMultiFilterOptions('filterSector',regs.map(x=>x.sector));
-    setMultiFilterOptions('filterComuna',regs.map(x=>x.comuna));
-    setMultiFilterOptions('filterStatus',regs.map(x=>statusNorm(x.status)).filter(Boolean));
-    setMultiFilterOptions('filterTutor',regs.map(x=>x.tutor).concat(props.flatMap(x=>x.tutors||[])));
-    setMultiFilterOptions('filterArea',regs.map(x=>x.area).concat(props.map(x=>x.area)));
-    setMultiFilterOptions('filterVenue',regs.map(x=>x.venue).concat(props.map(x=>x.venue)));
-    setMultiFilterOptions('filterShift',regs.map(x=>x.shift).concat(props.map(x=>x.shift)));
-    setMultiFilterOptions('filterCargo',regs.map(x=>x.cargoClass||x.cargo));
     const atts=selectedActions.length ? dataset.attendance.filter(x=>actionSet.has(x.actionCode)) : dataset.attendance;
+    const peopleRows=[...regs,...atts];
+    const props=selectedActions.length ? dataset.proposals.filter(x=>actionSet.has(x.actionCode)) : dataset.proposals;
+    setMultiFilterOptions('filterSchool',peopleRows.map(x=>x.school));
+    setMultiFilterOptions('filterDependency',peopleRows.map(x=>x.dependency));
+    setMultiFilterOptions('filterSector',peopleRows.map(x=>x.sector));
+    setMultiFilterOptions('filterComuna',peopleRows.map(x=>x.comuna));
+    setMultiFilterOptions('filterStatus',peopleRows.map(x=>statusNorm(x.status)).filter(Boolean));
+    setMultiFilterOptions('filterTutor',peopleRows.map(x=>x.tutor).concat(props.flatMap(x=>x.tutors||[])));
+    setMultiFilterOptions('filterArea',peopleRows.map(x=>x.area).concat(props.map(x=>x.area)));
+    setMultiFilterOptions('filterVenue',peopleRows.map(x=>x.venue).concat(props.map(x=>x.venue)));
+    setMultiFilterOptions('filterShift',peopleRows.map(x=>x.shift).concat(props.map(x=>x.shift)));
+    setMultiFilterOptions('filterCargo',peopleRows.map(x=>x.cargoClass||x.cargo));
     fillMultiSelect($('#filterDate'),atts.map(x=>x.eventDate).filter(Boolean),formatDate);
   }
   function selectedAction(){
@@ -2155,10 +2159,20 @@
   }
   function eventMetrics(regs,atts){
     const dates=unique(atts.map(x=>x.eventDate).filter(Boolean)).sort();
+    const hasRegistrationBase=(regs||[]).some(r=>idOf(r));
+    const observedBase=new Set((atts||[]).map(idOf).filter(Boolean));
     return dates.map(date=>{
       const attendees=new Set(atts.filter(a=>a.eventDate===date).map(idOf).filter(Boolean));
-      const active=new Set(regs.filter(r=>activeAtDate(r,date)).map(idOf).filter(Boolean));
-      return {date,attendees:attendees.size,active:active.size,presentism:rate(attendees.size,active.size)};
+      const active=hasRegistrationBase
+        ? new Set(regs.filter(r=>activeAtDate(r,date)).map(idOf).filter(Boolean))
+        : observedBase;
+      return {
+        date,
+        attendees:attendees.size,
+        active:active.size,
+        presentism:rate(attendees.size,active.size),
+        baseKind:hasRegistrationBase?'registrations':'observed'
+      };
     });
   }
 
@@ -2167,8 +2181,8 @@
     const regIds=new Set(regs.map(idOf).filter(Boolean)); const attIds=new Set(atts.map(idOf).filter(Boolean));
     $('#kpiRegistered').textContent=regIds.size.toLocaleString('es-AR');
     $('#kpiAttendees').textContent=attIds.size.toLocaleString('es-AR');
-    $('#kpiRate').textContent=rate(attIds.size,regIds.size).toLocaleString('es-AR')+'%';
-    $('#kpiSchools').textContent=unique(regs.map(schoolKey).filter(Boolean)).length.toLocaleString('es-AR');
+    $('#kpiRate').textContent=regIds.size ? rate(attIds.size,regIds.size).toLocaleString('es-AR')+'%' : (attIds.size ? '—' : '0%');
+    $('#kpiSchools').textContent=unique((regs.length?regs:atts).map(schoolKey).filter(Boolean)).length.toLocaleString('es-AR');
     $('#kpiParticipatingSchools').textContent=unique(atts.map(schoolKey).filter(Boolean)).length.toLocaleString('es-AR');
     $('#kpiCommissions').textContent=unique(regs.map(x=>x.commissionCode)).length.toLocaleString('es-AR');
     $('#kpiAttendanceRows').textContent=atts.length.toLocaleString('es-AR');
@@ -2197,9 +2211,13 @@
     const currentMetric=selectedMetrics.length===1 ? selectedMetrics[0] : (selectedMetrics.length ? selectedMetrics[selectedMetrics.length-1] : null);
     const avgPresentism=selectedMetrics.length?Math.round(selectedMetrics.reduce((a,x)=>a+x.presentism,0)/selectedMetrics.length*10)/10:null;
     $('#kpiPresentism').textContent=selectedMetrics.length>1 ? avgPresentism.toLocaleString('es-AR')+'%' : (currentMetric ? currentMetric.presentism.toLocaleString('es-AR')+'%' : '—');
+    const observedPresentism=selectedMetrics.length && selectedMetrics.every(x=>x.baseKind==='observed');
     $('#kpiPresentismHint').textContent=selectedMetrics.length>1
-      ? 'Promedio de '+selectedMetrics.length+' fechas seleccionadas'
-      : (currentMetric ? formatDate(currentMetric.date)+' · '+currentMetric.attendees+'/'+currentMetric.active+' activos' : 'por encuentro: asistentes / activos');
+      ? ('Promedio de '+selectedMetrics.length+' fechas seleccionadas'+(observedPresentism?' · base: participantes observados (sin padrón de inscriptos)':''))
+      : (currentMetric
+          ? formatDate(currentMetric.date)+' · '+currentMetric.attendees+'/'+currentMetric.active+
+            (currentMetric.baseKind==='observed'?' participantes observados':' activos')
+          : 'por encuentro: asistentes / activos');
     chart('attendanceChart','line',metrics.map(x=>formatDate(x.date)),[
       {label:'Docentes asistentes',data:metrics.map(x=>x.attendees),tension:.28,fill:false}
     ],{
@@ -2266,10 +2284,11 @@
     const shiftAtt=groupUnique(atts,r=>r.shift||'Sin turno').sort((a,b)=>b.value-a.value).slice(0,8);
     chart('shiftChart','doughnut',shiftAtt.map(x=>x.label),[{label:'Asistentes',data:shiftAtt.map(x=>x.value)}]);
 
-    const schools=groupUnique(regs.filter(r=>schoolKey(r)),r=>schoolKey(r)).sort((a,b)=>b.value-a.value);
+    const schoolBase=regs.length?regs:atts;
+    const schools=groupUnique(schoolBase.filter(r=>schoolKey(r)),r=>schoolKey(r)).sort((a,b)=>b.value-a.value);
     const attSchool=new Map(groupUnique(atts.filter(r=>schoolKey(r)),r=>schoolKey(r)).map(x=>[x.label,x.value]));
     const schoolMeta=new Map();
-    regs.forEach(r=>{const k=schoolKey(r);if(k&&!schoolMeta.has(k))schoolMeta.set(k,r)});
+    schoolBase.forEach(r=>{const k=schoolKey(r);if(k&&!schoolMeta.has(k))schoolMeta.set(k,r)});
     $('#schoolTable').innerHTML=schools.slice(0,80).map(s=>{
       const a=attSchool.get(s.label)||0,m=schoolMeta.get(s.label)||{};
       return `<tr><td>${esc(m.cue||'Sin CUE')}</td><td>${esc(upper(m.school)||'—')}</td><td>${esc(upper(m.dependency)||'—')}</td><td>${s.value}</td><td>${a}</td><td>${rate(a,s.value).toLocaleString('es-AR')}%</td></tr>`
@@ -4039,7 +4058,7 @@
       ...filters.map(([k,v])=>({INDICADOR:'Filtro · '+k,VALOR:v})),
       {INDICADOR:'Docentes inscriptos',VALOR:regIds.size},
       {INDICADOR:'Docentes asistentes',VALOR:attIds.size},
-      {INDICADOR:'Asistencia %',VALOR:rate(attIds.size,regIds.size)},
+      {INDICADOR:'Asistencia %',VALOR:regIds.size?rate(attIds.size,regIds.size):''},
       {INDICADOR:'Presentismo %',VALOR:currentMetric?.presentism??''},
       {INDICADOR:'Escuelas representadas',VALOR:unique(regs.map(schoolKey).filter(Boolean)).length},
       {INDICADOR:'Escuelas participantes',VALOR:unique(atts.map(schoolKey).filter(Boolean)).length},
@@ -4051,7 +4070,11 @@
     const wb=XLSX.utils.book_new();
     appendJsonSheet(wb,'Resumen',summary);
     appendJsonSheet(wb,'Por fecha',metrics.map(x=>({
-      FECHA:formatDate(x.date),ACTIVOS:x.active,'ASISTENTES':x.attendees,'PRESENTISMO %':x.presentism
+      FECHA:formatDate(x.date),
+      BASE:x.baseKind==='observed'?'Participantes observados':'Activos',
+      ACTIVOS:x.active,
+      ASISTENTES:x.attendees,
+      'PRESENTISMO %':x.presentism
     })));
     appendJsonSheet(wb,'Comisiones',commissionExportRows());
     appendJsonSheet(wb,'Por área',(()=>{

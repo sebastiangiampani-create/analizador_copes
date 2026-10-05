@@ -3197,12 +3197,29 @@
     const q=normalize($('#editorSearch')?.value||'');
     const rows=(dataset[type]||[]).filter(r=>r.actionCode===code && editorSearchMatch(r,q));
     const fields=recordFieldsFor(code,type);
-    const visible=fields.slice(0,7);
+    const fieldByKey=new Map(fields.map(f=>[f.key,f]));
+    const attendanceKeys=['dni','surname','firstName','name','email','commissionCode','eventDate','encounter'];
+    const visible=type==='attendance'
+      ? attendanceKeys.map(key=>fieldByKey.get(key)).filter(Boolean)
+      : fields.slice(0,7);
+    const tableLabel=f=>{
+      if(type==='attendance'&&f.key==='eventDate')return 'Fecha de asistencia';
+      return f.label||FIELD_LABELS[f.key]||f.key;
+    };
+    const tableValue=(r,f)=>{
+      const value=r[f.key];
+      if(type==='attendance'&&f.key==='eventDate')return value?formatDate(value):'—';
+      if(type==='attendance'&&f.key==='capturedAt'&&value){
+        const d=new Date(value);
+        return Number.isNaN(d.getTime())?displayEditorValue(value):d.toLocaleString('es-AR');
+      }
+      return displayEditorValue(value);
+    };
     $('#editorCount').textContent=rows.length.toLocaleString('es-AR')+' registro(s) · '+EDITOR_TYPES[type].label;
-    $('#editorTableHead').innerHTML='<tr>'+visible.map(f=>'<th>'+esc(f.label||FIELD_LABELS[f.key]||f.key)+'</th>').join('')+'<th></th></tr>';
+    $('#editorTableHead').innerHTML='<tr>'+visible.map(f=>'<th>'+esc(tableLabel(f))+'</th>').join('')+'<th></th></tr>';
     $('#editorTableBody').innerHTML=rows.slice(0,1000).map((r,i)=>{
       const key=recordIdentity(type,r);
-      return '<tr data-editor-row="'+esc(key)+'">'+visible.map(f=>'<td>'+esc(displayEditorValue(r[f.key]))+'</td>').join('')+
+      return '<tr data-editor-row="'+esc(key)+'">'+visible.map(f=>'<td>'+esc(tableValue(r,f))+'</td>').join('')+
         '<td><button type="button" class="source-action-btn" data-edit-record="'+esc(key)+'">Editar</button></td></tr>';
     }).join('') || '<tr><td colspan="'+(visible.length+1)+'" class="empty">No hay registros para esta selección.</td></tr>';
     renderEditorFields();

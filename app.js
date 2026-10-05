@@ -1280,6 +1280,7 @@
     }
     applyTutorsToDataset();
     applyMasterDataToDataset();
+    codes.forEach(code=>applyEditorLayer(code));
     return codes;
   }
 
@@ -1560,6 +1561,7 @@
     }
     applyTutorsToDataset();
     applyMasterDataToDataset();
+    applyEditorLayer(code);
     const existedImport=dataset.imports.some(x=>x.code===code);
     const previousImport=dataset.imports.find(x=>x.code===code);
     const mergedImport=p.importInfo?.bajasOnly&&previousImport
@@ -3008,10 +3010,12 @@
     const e=action.editor;
     if(!Array.isArray(e.customFields))e.customFields=[];
     if(!e.overrides || typeof e.overrides!=='object')e.overrides={};
+    if(!e.originals || typeof e.originals!=='object')e.originals={};
     if(!e.additions || typeof e.additions!=='object')e.additions={};
     if(!e.deletions || typeof e.deletions!=='object')e.deletions={};
     for(const type of Object.keys(EDITOR_TYPES)){
       if(!e.overrides[type] || typeof e.overrides[type]!=='object')e.overrides[type]={};
+      if(!e.originals[type] || typeof e.originals[type]!=='object')e.originals[type]={};
       if(!Array.isArray(e.additions[type]))e.additions[type]=[];
       if(!Array.isArray(e.deletions[type]))e.deletions[type]=[];
     }
@@ -3087,6 +3091,7 @@
     });
   }
   function inferFieldType(key,rows=[]){
+    if(/capturedat|createdat|updatedat|finalizedat/i.test(String(key||'')))return 'datetime';
     if(/date|fecha/i.test(key))return 'date';
     const sample=rows.map(r=>r?.[key]).find(v=>v!==''&&v!==null&&v!==undefined);
     if(typeof sample==='number')return 'number';
@@ -3216,18 +3221,46 @@
     renderEditor();
     toast(field.active===false?'Campo desactivado; los datos se conservan.':'Campo activado.');
   }
+  function editorDateTimeLocalValue(value){
+    if(!value)return '';
+    const d=new Date(value);
+    if(Number.isNaN(d.getTime()))return String(value).slice(0,16);
+    const pad=n=>String(n).padStart(2,'0');
+    return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+  }
+
+  function meetingEditorText(meetings=[]){
+    return (meetings||[]).map((m,i)=>{
+      const label=String(m?.label||('Encuentro '+(i+1))).trim();
+      const date=String(m?.date||'').trim();
+      const text=String(m?.text||'').trim();
+      return label+' | '+(date||text);
+    }).join('\n');
+  }
+
   function fieldInputHtml(field,value){
     const id='editfld_'+field.key;
     const val=value??'';
+    if(field.key==='meetings'){
+      return '<label class="editor-field-input full"><span>'+esc(field.label)+'</span>'+
+        '<textarea name="'+esc(field.key)+'" data-editor-kind="meetings" rows="6" placeholder="Encuentro 1 | 2026-08-12">'+esc(meetingEditorText(Array.isArray(val)?val:[]))+'</textarea>'+
+        '<small>Una fecha por línea: nombre del encuentro | AAAA-MM-DD</small></label>';
+    }
     if(field.type==='boolean')return '<label class="editor-field-input"><span>'+esc(field.label)+'</span><select name="'+esc(field.key)+'" id="'+esc(id)+'"><option value=""></option><option value="true" '+(val===true||String(val)==='true'?'selected':'')+'>Sí</option><option value="false" '+(val===false||String(val)==='false'?'selected':'')+'>No</option></select></label>';
     if(field.type==='select')return '<label class="editor-field-input"><span>'+esc(field.label)+'</span><select name="'+esc(field.key)+'" id="'+esc(id)+'"><option value=""></option>'+(field.options||[]).map(o=>'<option value="'+esc(o)+'" '+(String(val)===String(o)?'selected':'')+'>'+esc(o)+'</option>').join('')+'</select></label>';
-    if(field.type==='textarea'||field.type==='json'||Array.isArray(val)||(val&&typeof val==='object')){
-      const text=Array.isArray(val)?val.map(x=>typeof x==='object'?JSON.stringify(x):x).join('\n'):(val&&typeof val==='object'?JSON.stringify(val,null,2):String(val||''));
-      return '<label class="editor-field-input full"><span>'+esc(field.label)+'</span><textarea name="'+esc(field.key)+'" data-editor-kind="'+(field.type==='json'||val&&typeof val==='object'?'json':Array.isArray(val)?'array':'text')+'" rows="4">'+esc(text)+'</textarea></label>';
+    if(field.type==='json'||(Array.isArray(val)&&val.some(x=>x&&typeof x==='object'))||(val&&typeof val==='object'&&!Array.isArray(val))){
+      const text=JSON.stringify(val??'',null,2);
+      return '<label class="editor-field-input full"><span>'+esc(field.label)+'</span><textarea name="'+esc(field.key)+'" data-editor-kind="json" rows="6">'+esc(text)+'</textarea></label>';
     }
-    const inputType=field.type==='number'?'number':field.type==='date'?'date':'text';
-    return '<label class="editor-field-input"><span>'+esc(field.label)+'</span><input name="'+esc(field.key)+'" type="'+inputType+'" value="'+esc(val)+'" /></label>';
+    if(field.type==='textarea'||Array.isArray(val)){
+      const text=Array.isArray(val)?val.join('\n'):String(val||'');
+      return '<label class="editor-field-input full"><span>'+esc(field.label)+'</span><textarea name="'+esc(field.key)+'" data-editor-kind="'+(Array.isArray(val)?'array':'text')+'" rows="4">'+esc(text)+'</textarea></label>';
+    }
+    const inputType=field.type==='number'?'number':field.type==='date'?'date':field.type==='datetime'?'datetime-local':'text';
+    const inputValue=field.type==='datetime'?editorDateTimeLocalValue(val):val;
+    return '<label class="editor-field-input"><span>'+esc(field.label)+'</span><input name="'+esc(field.key)+'" type="'+inputType+'" value="'+esc(inputValue)+'" /></label>';
   }
+
   function openRecordModal(row=null){
     const code=editorActionCode(),type=editorType(); if(!code)return;
     editorState.recordRef=row;
@@ -3237,6 +3270,10 @@
     $('#editorRecordTitle').textContent=(row?'Editar ':'Agregar ')+EDITOR_TYPES[type].singular+' · '+code;
     $('#editorRecordFields').innerHTML=fields.map(f=>fieldInputHtml(f,record[f.key])).join('');
     $('#editorDeleteRecord').hidden=!row;
+    const key=row?recordIdentity(type,row):'';
+    const cfg=actionEditorConfig(code);
+    const canRestore=!!(row && !row._manualAdded && !row._manualId && cfg?.overrides?.[type]?.[key]);
+    if($('#editorRestoreRecord'))$('#editorRestoreRecord').hidden=!canRestore;
     $('#editorRecordModal').hidden=false;
   }
   function closeRecordModal(){if($('#editorRecordModal'))$('#editorRecordModal').hidden=true;editorState.recordRef=null;editorState.isNew=false;}
@@ -3245,7 +3282,18 @@
     let value=control.value;
     if(field.type==='number')return value===''?'':num(value);
     if(field.type==='boolean')return value===''?'':value==='true';
+    if(field.type==='datetime')return value===''?'':new Date(value).toISOString();
     const kind=control.dataset?.editorKind;
+    if(kind==='meetings'){
+      return value.split(/\n+/).map((line,i)=>{
+        const parts=line.split('|').map(x=>x.trim());
+        const label=parts.shift()||('Encuentro '+(i+1));
+        const raw=parts.join('|').trim();
+        if(!raw)return null;
+        const date=/^\d{4}-\d{2}-\d{2}$/.test(raw)?raw:isoDate(raw,new Date().getFullYear());
+        return {label,text:date?formatDate(date):raw,date:date||''};
+      }).filter(Boolean);
+    }
     if(kind==='array')return unique(value.split(/\n|;/).map(x=>x.trim()).filter(Boolean));
     if(kind==='json'){
       if(!value.trim())return Array.isArray(existing)?[]:{};
@@ -3293,6 +3341,7 @@
           const stored={...stripEditorMeta(base),_manualId:mid};
           if(idx>=0)cfg.additions[type][idx]=stored; else cfg.additions[type].push(stored);
         }else{
+          if(!cfg.originals[type][key])cfg.originals[type][key]=stripEditorMeta(current);
           cfg.overrides[type][key]=stripEditorMeta(base);
         }
         const idx=dataset[type].indexOf(current);
@@ -3306,6 +3355,33 @@
       console.error(err);toast(err?.message||'No se pudo guardar el registro.');
     }
   }
+  async function restoreEditorRecord(){
+    const code=editorActionCode(),type=editorType(),row=editorState.recordRef;
+    if(!code||!row)return;
+    const cfg=actionEditorConfig(code);
+    const key=recordIdentity(type,row);
+    const original=cfg?.originals?.[type]?.[key];
+    if(!original){
+      toast('No hay una copia original disponible para este registro.');
+      return;
+    }
+    if(!confirm('¿Restaurar este registro al valor original importado?'))return;
+    delete cfg.overrides[type][key];
+    delete cfg.originals[type][key];
+    const idx=(dataset[type]||[]).indexOf(row);
+    if(idx>=0)dataset[type][idx]={...structuredClone(original),actionCode:code};
+    try{
+      applyTutorsToDataset();
+      applyEditorLayer(code);
+      await persistEditorAction(code);
+      closeRecordModal();
+      applyFilters();renderEditor();
+      toast('Registro restaurado al valor original.');
+    }catch(e){
+      console.error(e);toast('No se pudo verificar la restauración en Supabase.');
+    }
+  }
+
   async function deleteEditorRecord(){
     const code=editorActionCode(),type=editorType(),row=editorState.recordRef;
     if(!code||!row)return;
@@ -3317,6 +3393,7 @@
       const key=recordIdentity(type,row);
       cfg.deletions[type]=unique([...(cfg.deletions[type]||[]),key]);
       delete cfg.overrides[type][key];
+      delete cfg.originals[type][key];
     }
     dataset[type]=dataset[type].filter(x=>x!==row);
     try{
@@ -3731,7 +3808,8 @@
 
   function renderAll(){
     applyTutorsToDataset();
-    refreshFilterOptions(); renderImportResults(); renderSources(); renderTutorAdmin(); applyFilters();
+    applyAllEditorLayers();
+    refreshFilterOptions(); renderImportResults(); renderSources(); renderTutorAdmin(); renderEditor(); applyFilters();
     initChartControls(); initReportPickers(); renderCustomReportConfigurator(); renderReportBuilder();
   }
 
@@ -3741,6 +3819,7 @@
     $('#view-'+name)?.classList.add('active');
     document.querySelector(`.nav-item[data-view="${name}"]`)?.classList.add('active');
     if(name==='tutors')renderTutorAdmin();
+    if(name==='editor')renderEditor();
     if(name==='reports'){
       renderCustomReportConfigurator();
       renderReportBuilder();
@@ -4191,6 +4270,21 @@
       const btn=e.target.closest('[data-remove-tutor-assignment]');
       if(btn)removeManualTutorAssignment(btn.dataset.removeTutorAssignment);
     });
+    $('#editorAction')?.addEventListener('change',renderEditor);
+    $('#editorDataset')?.addEventListener('change',renderEditor);
+    $('#editorSearch')?.addEventListener('input',()=>{clearTimeout(renderEditor.t);renderEditor.t=setTimeout(renderEditor,160)});
+    $('#editorTableBody')?.addEventListener('click',e=>{
+      const btn=e.target.closest('[data-edit-record]');
+      if(!btn)return;
+      const row=rowByEditorKey(editorType(),editorActionCode(),btn.dataset.editRecord);
+      if(row)openRecordModal(row);
+    });
+    $('#editorRecordForm')?.addEventListener('submit',saveEditorRecord);
+    $('#editorDeleteRecord')?.addEventListener('click',deleteEditorRecord);
+    $('#editorRestoreRecord')?.addEventListener('click',restoreEditorRecord);
+    $('#editorRecordClose')?.addEventListener('click',closeRecordModal);
+    $('#editorRecordCancel')?.addEventListener('click',closeRecordModal);
+    $('#editorRecordModal')?.addEventListener('click',e=>{if(e.target===$('#editorRecordModal'))closeRecordModal()});
   }
 
   async function init(){

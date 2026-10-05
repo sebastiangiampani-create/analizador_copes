@@ -3324,8 +3324,12 @@
       base.actionCode=code;
       if(type==='registrations' && !base.status)base.status='Activo';
       if(type==='bajas')base.status='Baja';
-      if(base.area!==undefined)base.areaClass=classifyArea(base.area)||base.areaClass||'';
-      if(base.cargo!==undefined)base.cargoClass=classifyCargo(base.cargo)||base.cargoClass||'';
+      const areaChanged=!current || String(base.area??'')!==String(current?.area??'');
+      const areaClassChanged=!current || String(base.areaClass??'')!==String(current?.areaClass??'');
+      const cargoChanged=!current || String(base.cargo??'')!==String(current?.cargo??'');
+      const cargoClassChanged=!current || String(base.cargoClass??'')!==String(current?.cargoClass??'');
+      if(base.area!==undefined && areaChanged && !areaClassChanged)base.areaClass=classifyArea(base.area)||base.areaClass||'';
+      if(base.cargo!==undefined && cargoChanged && !cargoClassChanged)base.cargoClass=classifyCargo(base.cargo)||base.cargoClass||'';
       const cfg=actionEditorConfig(code);
       if(editorState.isNew){
         base._manualId=editorId();

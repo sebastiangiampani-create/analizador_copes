@@ -1238,6 +1238,35 @@
     });
   }
 
+  function parseSchoolMasterRows(rows=[]){
+    return (rows||[]).map(raw=>{
+      const m=mapRow(raw);
+      const cueanexo=cleanCueAnexo(
+        pickExact(raw,['Cueanexo','CUEANEXO','CUE Anexo']) ||
+        pick(m,['Cueanexo','CUEANEXO','CUE Anexo'])
+      );
+      const cue=cleanCue(
+        pickExact(raw,['CUE','Cue']) ||
+        pick(m,['CUE','Cue']) ||
+        cueanexo
+      );
+      const nombre=String(
+        pickExact(raw,['Nombre','NOMBRE','Escuela','ESCUELA']) ||
+        pick(m,['Nombre','Escuela']) || ''
+      ).trim();
+      return {
+        cueanexo,
+        cue,
+        nombre,
+        sector:String(pickExact(raw,['Sector','SECTOR'])||pick(m,['Sector'])||'').trim(),
+        dependency:String(pickExact(raw,['Dependencia','DEPENDENCIA'])||pick(m,['Dependencia'])||'').trim(),
+        departamento:String(pickExact(raw,['Comuna','COMUNA','Departamento'])||pick(m,['Comuna','Departamento'])||'').trim(),
+        nombre_norm:normalize(nombre),
+        active:true
+      };
+    }).filter(r=>r.cueanexo&&r.nombre);
+  }
+
   function parseSupportWorkbook(file,wb){
     const names=wb.SheetNames||[];
     const normalized=names.map(n=>({name:n,norm:normalize(n)}));
@@ -1250,16 +1279,30 @@
     };
     const tutorRows=sheetRows('tutor');
     const bajaRows=sheetRows('baja');
+    const schoolRows=sheetRows('padron');
     const tutors=parseTutorRows(tutorRows,'',file.name);
     const bajas=parseSupportBajaRows(bajaRows,'',file.name);
-    if(!tutors.length&&!bajas.length)return null;
-    return {supportOnly:true,file:file.name,tutors,bajas};
+    const masterSchools=parseSchoolMasterRows(schoolRows);
+    if(!tutors.length&&!bajas.length&&!masterSchools.length)return null;
+    return {supportOnly:true,file:file.name,tutors,bajas,masterSchools};
   }
 
   function mergeSupportWorkbook(parsed){
     const tutorCodes=unique((parsed.tutors||[]).map(x=>x.actionCode));
     const bajaCodes=unique((parsed.bajas||[]).map(x=>x.actionCode));
     const codes=unique([...tutorCodes,...bajaCodes]);
+
+    if((parsed.masterSchools||[]).length){
+      const byAnexo=new Map((dataset.masters?.schools||[]).map(x=>[cleanCueAnexo(x.cueanexo),x]));
+      for(const school of parsed.masterSchools){
+        const key=cleanCueAnexo(school.cueanexo);
+        if(!key)continue;
+        byAnexo.set(key,{...(byAnexo.get(key)||{}),...school});
+      }
+      dataset.masters={...(dataset.masters||{}),schools:[...byAnexo.values()]};
+      schoolIndexMemoSource=null;
+      schoolIndexMemo=null;
+    }
 
     for(const code of tutorCodes){
       dataset.tutors=dataset.tutors.filter(x=>x.actionCode!==code)
@@ -1615,11 +1658,14 @@
         if(support){
           const codes=mergeSupportWorkbook(support);
           successfulCodes.push(...codes);
+          if((support.masterSchools||[]).length && remoteReady){
+            await remoteRequest('upsert_masters',{kind:'schools',rows:support.masterSchools});
+          }
           results.push({
             ok:true,
             updated:true,
-            code:codes.join(', '),
-            title:'Base auxiliar',
+            code:codes.join(', ') || 'PADRÓN',
+            title:(support.masterSchools||[]).length?'Base auxiliar · Padrón maestro':'Base auxiliar',
             file:file.name,
             proposals:0,
             registrations:0,
@@ -2184,7 +2230,7 @@
     $('#kpiRate').textContent=regIds.size ? rate(attIds.size,regIds.size).toLocaleString('es-AR')+'%' : (attIds.size ? '—' : '0%');
     $('#kpiSchools').textContent=unique((regs.length?regs:atts).map(schoolKey).filter(Boolean)).length.toLocaleString('es-AR');
     $('#kpiParticipatingSchools').textContent=unique(atts.map(schoolKey).filter(Boolean)).length.toLocaleString('es-AR');
-    $('#kpiCommissions').textContent=unique(regs.map(x=>x.commissionCode)).length.toLocaleString('es-AR');
+    $('#kpiCommissions').textContent=unique((regs.length?regs:atts).map(x=>x.commissionCode)).length.toLocaleString('es-AR');
     $('#kpiAttendanceRows').textContent=atts.length.toLocaleString('es-AR');
     const linkedAttIds=new Set([...attIds].filter(x=>regIds.has(x)));
     const schoolsReg=unique(regs.map(schoolKey).filter(Boolean));
@@ -2193,9 +2239,10 @@
     $('#insightNoShow').textContent=[...regIds].filter(x=>!linkedAttIds.has(x)).length.toLocaleString('es-AR');
     $('#insightSchoolsNoShow').textContent=schoolsReg.filter(x=>x&&!schoolsAtt.has(x)).length.toLocaleString('es-AR');
     $('#insightBajas').textContent=(filtered.bajas||[]).length.toLocaleString('es-AR');
-    $('#exportBtn').disabled=!regs.length;
-    $('#excelBtn').disabled=!regs.length;
-    $('#printBtn').disabled=!regs.length;
+    const noAnalysisData=!regs.length&&!atts.length;
+    $('#exportBtn').disabled=noAnalysisData;
+    $('#excelBtn').disabled=noAnalysisData;
+    $('#printBtn').disabled=noAnalysisData;
 
     const selectedActions=multiFilterValues('filterAction');
     const act=selectedActions.length===1?dataset.actions.find(x=>x.code===selectedActions[0]):null;
@@ -2247,8 +2294,9 @@
     const areaClass=groupUnique(regs,r=>r.areaClass||classifyArea(r.area)||'Otros / sin clasificación').sort((a,b)=>b.value-a.value);
     chart('areaChart','bar',areaClass.map(x=>x.label),[{label:'Docentes',data:areaClass.map(x=>x.value)}],{indexAxis:'y'});
 
-    const byDep=groupUnique(regs,r=>r.dependency||'Sin dependencia').sort((a,b)=>b.value-a.value).slice(0,10);
-    chart('dependencyChart','bar',byDep.map(x=>x.label),[{label:'Inscriptos',data:byDep.map(x=>x.value)}],{indexAxis:'y'});
+    const dependencyBase=regs.length?regs:atts;
+    const byDep=groupUnique(dependencyBase,r=>r.dependency||'Sin dependencia').sort((a,b)=>b.value-a.value).slice(0,10);
+    chart('dependencyChart','bar',byDep.map(x=>x.label),[{label:regs.length?'Inscriptos':'Participantes',data:byDep.map(x=>x.value)}],{indexAxis:'y'});
 
     const commRegs=groupUnique(regs,r=>r.commissionCode).sort((a,b)=>b.value-a.value).slice(0,24);
     const attByComm=new Map(groupUnique(atts,r=>r.commissionCode).map(x=>[x.label,x.value]));

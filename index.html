@@ -24,6 +24,7 @@
         <button class="nav-item active" data-view="dashboard"><span class="nav-icon">▦</span><span>Panel general</span></button>
         <button class="nav-item" data-view="imports"><span class="nav-icon">⇧</span><span>Cargar bases</span></button>
         <button class="nav-item" data-view="sources"><span class="nav-icon">↻</span><span>Fuentes</span></button>
+        <button class="nav-item" data-view="tutors"><span class="nav-icon">◎</span><span>Tutores</span></button>
         <button class="nav-item" data-view="reports"><span class="nav-icon">▤</span><span>Informes</span></button>
         <button class="nav-item" data-view="detail"><span class="nav-icon">≡</span><span>Detalle</span></button>
       </nav>
@@ -373,6 +374,109 @@
           </div>
         </article>
       </section>
+
+      <section id="view-tutors" class="view">
+        <div class="page-intro">
+          <span class="section-kicker">TUTORES / CAPACITADORES</span>
+          <h2>Asignación de tutores</h2>
+          <p>La información que llega desde la fuente automática se conserva. Cuando una asignación falta, podés completarla manualmente sin editar la base de personas.</p>
+        </div>
+
+        <div class="tutor-summary">
+          <article class="source-stat"><span>Tutores disponibles</span><strong id="tutorPeopleCount">0</strong></article>
+          <article class="source-stat"><span>Asignaciones manuales</span><strong id="tutorAssignmentCount">0</strong></article>
+          <article class="source-stat"><span>Acciones con asignación manual</span><strong id="tutorActionCount">0</strong></article>
+        </div>
+
+        <div class="tutor-admin-grid">
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Catálogo de tutores</h3>
+                <p>Si el tutor ya fue detectado automáticamente, también aparecerá disponible para asignar. Si no existe, agregalo acá.</p>
+              </div>
+              <span class="panel-chip">Alta manual</span>
+            </div>
+
+            <form id="manualTutorForm" class="tutor-form">
+              <label class="field">
+                <span>Apellido y nombre</span>
+                <input id="manualTutorName" type="text" autocomplete="off" placeholder="Ej. Pérez, Ana" required />
+              </label>
+              <label class="field">
+                <span>DNI <small>(opcional)</small></span>
+                <input id="manualTutorDni" type="text" inputmode="numeric" autocomplete="off" placeholder="Sin puntos" />
+              </label>
+              <label class="field">
+                <span>Correo <small>(opcional)</small></span>
+                <input id="manualTutorEmail" type="email" autocomplete="off" placeholder="correo@ejemplo.com" />
+              </label>
+              <div class="tutor-form-action">
+                <button type="submit" class="btn primary">Agregar tutor</button>
+              </div>
+            </form>
+
+            <div class="table-scroll tutor-table-scroll">
+              <table>
+                <thead><tr><th>Tutor / capacitador</th><th>DNI</th><th>Origen</th><th></th></tr></thead>
+                <tbody id="manualTutorCatalogTable"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Asignar a una acción</h3>
+                <p>Podés seleccionar varios tutores. Si no elegís comisión, se asignan a toda la acción.</p>
+              </div>
+              <span class="panel-chip">Varios tutores</span>
+            </div>
+
+            <form id="manualTutorAssignmentForm" class="tutor-assignment-form">
+              <label class="field">
+                <span>Acción</span>
+                <select id="manualTutorAction" required>
+                  <option value="">Seleccionar acción...</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Curso / comisión <small>(opcional)</small></span>
+                <select id="manualTutorCommission">
+                  <option value="">Toda la acción</option>
+                </select>
+              </label>
+              <label class="field full">
+                <span>Tutores / capacitadores</span>
+                <select id="manualTutorPeople" multiple size="7" required></select>
+                <small class="filter-help">Usá Ctrl/Cmd o Shift para seleccionar más de uno.</small>
+              </label>
+              <div class="source-note full">
+                <strong>Prioridad:</strong> si la asignación ya viene correctamente desde la planilla maestra o desde el Excel de la acción, se respeta. La asignación manual completa solamente lo que falta.
+              </div>
+              <div class="tutor-form-action full">
+                <button type="submit" class="btn primary">Asignar seleccionados</button>
+              </div>
+            </form>
+          </article>
+        </div>
+
+        <article class="panel tutor-assignment-list-panel">
+          <div class="panel-head">
+            <div>
+              <h3>Asignaciones manuales</h3>
+              <p>Una misma acción puede tener tantos tutores como necesite.</p>
+            </div>
+          </div>
+          <div class="table-scroll tutor-table-scroll">
+            <table>
+              <thead><tr><th>Acción</th><th>Curso / comisión</th><th>Tutor / capacitador</th><th>Origen</th><th></th></tr></thead>
+              <tbody id="manualTutorAssignmentsTable"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
 
       <section id="view-reports" class="view">
         <div class="page-intro">

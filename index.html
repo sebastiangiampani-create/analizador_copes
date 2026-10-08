@@ -102,6 +102,14 @@
               <input id="filterStatus" list="filterStatusList" type="text" autocomplete="off" placeholder="Activo, Baja..." />
               <datalist id="filterStatusList"></datalist>
             </label>
+            <label>AÑO
+              <input id="filterYear" list="filterYearList" type="text" autocomplete="off" placeholder="2025, 2026..." />
+              <datalist id="filterYearList"></datalist>
+            </label>
+            <label>ENCUENTRO
+              <input id="filterEncounter" list="filterEncounterList" type="text" autocomplete="off" placeholder="E1, Encuentro 2..." />
+              <datalist id="filterEncounterList"></datalist>
+            </label>
             <label>FECHAS
               <select id="filterDate" multiple size="4" title="Podés seleccionar más de una fecha"></select>
               <input id="filterDateManual" type="text" autocomplete="off" placeholder="También podés escribir: 12/08/2026, 26/08/2026" />
@@ -123,7 +131,14 @@
               <input id="filterShift" list="filterShiftList" type="text" autocomplete="off" placeholder="Escribí o elegí..." />
               <datalist id="filterShiftList"></datalist>
             </label>
-            
+            <label>Cargo
+              <input id="filterCargo" list="filterCargoList" type="text" autocomplete="off" placeholder="Escribí o elegí..." />
+              <datalist id="filterCargoList"></datalist>
+            </label>
+            <label>Es DAR
+              <input id="filterDar" list="filterDarList" type="text" autocomplete="off" placeholder="Sí / No" />
+              <datalist id="filterDarList"></datalist>
+            </label>
             
             <label class="search-label">Buscar<input id="globalSearch" type="search" placeholder="DNI, escuela, docente, tutor..." /></label>
           </div>
@@ -186,12 +201,12 @@
 
         <div class="chart-grid">
           <article class="panel">
-            <div class="panel-head"><div><h3>Presentismo por Fecha</h3><p>Cantidad de docentes asistentes únicos en cada encuentro</p></div><span class="panel-chip">Cantidad</span></div>
+            <div class="panel-head"><div><h3>Presentismo por encuentro</h3><p>Cantidad de docentes asistentes únicos por encuentro y fecha</p></div><span class="panel-chip">Cantidad</span></div>
             <div class="chart-wrap tall"><canvas id="attendanceChart"></canvas></div>
           </article>
 
           <article class="panel">
-            <div class="panel-head"><div><h3>% de presentismo por Fecha</h3><p>Asistentes de la fecha / docentes activos en esa fecha</p></div><span class="panel-chip">Porcentaje</span></div>
+            <div class="panel-head"><div><h3>% de presentismo por encuentro</h3><p>Asistentes / universo correspondiente al encuentro</p></div><span class="panel-chip">Porcentaje</span></div>
             <div class="chart-wrap tall"><canvas id="presentismPercentChart"></canvas></div>
           </article>
 
@@ -249,8 +264,8 @@
 
         <div class="table-grid">
           <article class="panel">
-            <div class="panel-head"><div><h3>Escuelas con participación</h3><p>Por CUE; si falta CUE, se identifica por nombre de escuela</p></div></div>
-            <div class="table-scroll"><table><thead><tr><th>CUE</th><th>ESCUELA</th><th>DEPENDENCIA</th><th>Inscriptos</th><th>Asistentes</th><th>%</th></tr></thead><tbody id="schoolTable"></tbody></table></div>
+            <div class="panel-head"><div><h3>Escuelas sin asistencia</h3><p>Escuelas con docentes inscriptos/activos pero sin asistentes para los filtros actuales</p></div></div>
+            <div class="table-scroll"><table><thead><tr><th>CUE</th><th>ESCUELA</th><th>DEPENDENCIA</th><th>Docentes</th></tr></thead><tbody id="schoolTable"></tbody></table></div>
           </article>
           <article class="panel">
             <div class="panel-head"><div><h3>Inscriptos sin asistencia</h3><p>Nómina según filtros activos</p></div></div>

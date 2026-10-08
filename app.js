@@ -1473,7 +1473,7 @@
 
     const registrations=regRows.map(raw=>{
       const m=mapRow(raw);
-      let pcode=codeIn(pick(m,['Codigo','Código','Taller','Propuesta'])) || code;
+      let pcode=codeIn(pick(m,['Codigo','Código','Comision','Comisión','Taller','Propuesta'])) || code;
       pcode=pcode.toUpperCase();
       const p=pMap.get(pcode);
       const schoolRaw=pickExact(raw,['ESCUELA','Escuela','Establecimiento','Escuela / Establecimiento'])||pick(m,['Establecimiento','Escuela / Establecimiento','Escuela']);
@@ -3155,16 +3155,17 @@
     statusDate:'Fecha de estado',bajaDate:'Fecha de baja',region:'DE / Región',area:'Área',
     areaClass:'Área clasificada',cargo:'Cargo',cargoClass:'Cargo clasificado',formation:'Formación',
     venue:'Sede',shift:'Turno',tutor:'Tutor / capacitador',registrationDate:'Fecha de inscripción',
+    dataYear:'Año',universe:'Universo',isDar:'Es DAR',
     encounter:'Encuentro',eventDate:'Fecha de encuentro',capturedAt:'Fecha del registro',
     reason:'Motivo / observación',date:'Fecha',courseName:'Curso / comisión',source:'Fuente',capacity:'Cupo',
     registeredReported:'Inscriptos informados',tutors:'Tutores / capacitadores',meetings:'Encuentros'
   };
   const PREFERRED_FIELDS={
-    registrations:['dni','surname','firstName','name','email','commissionCode','school','cue','cueAnexo','dependency','sector','comuna','status','statusDate','bajaDate','region','area','areaClass','cargo','cargoClass','formation','venue','shift','tutor','registrationDate','source'],
-    attendance:['dni','surname','firstName','name','email','commissionCode','encounter','eventDate','capturedAt','school','cue','cueAnexo','dependency','sector','comuna','status','region','area','areaClass','cargo','cargoClass','formation','venue','shift','tutor','source'],
-    bajas:['dni','surname','firstName','name','email','commissionCode','bajaDate','school','cue','cueAnexo','dependency','sector','comuna','status','reason','source'],
+    registrations:['dni','surname','firstName','name','email','commissionCode','dataYear','universe','isDar','school','cue','cueAnexo','dependency','sector','comuna','status','statusDate','bajaDate','region','area','areaClass','cargo','cargoClass','formation','venue','shift','tutor','registrationDate','source'],
+    attendance:['dni','surname','firstName','name','email','commissionCode','dataYear','universe','isDar','encounter','eventDate','capturedAt','school','cue','cueAnexo','dependency','sector','comuna','status','region','area','areaClass','cargo','cargoClass','formation','venue','shift','tutor','source'],
+    bajas:['dni','surname','firstName','name','email','commissionCode','dataYear','universe','isDar','bajaDate','school','cue','cueAnexo','dependency','sector','comuna','status','reason','source'],
     tutors:['dni','name','commissionCode','courseName','date','source'],
-    proposals:['code','commission','area','areaClass','formation','venue','shift','capacity','registeredReported','tutors','meetings']
+    proposals:['code','commission','dataYear','universe','isDar','area','areaClass','formation','venue','shift','capacity','registeredReported','tutors','meetings']
   };
   let editorState={recordRef:null,isNew:false,reportRows:[],reportColumns:[]};
 
@@ -3302,7 +3303,7 @@
     const rows=(dataset[type]||[]).filter(r=>r.actionCode===code && editorSearchMatch(r,q));
     const fields=recordFieldsFor(code,type);
     const fieldByKey=new Map(fields.map(f=>[f.key,f]));
-    const attendanceKeys=['dni','surname','firstName','name','email','commissionCode','eventDate','encounter'];
+    const attendanceKeys=['dni','surname','firstName','name','email','commissionCode','dataYear','universe','eventDate','encounter'];
     const visible=type==='attendance'
       ? attendanceKeys.map(key=>fieldByKey.get(key)).filter(Boolean)
       : fields.slice(0,7);
@@ -4114,6 +4115,9 @@
       EMAIL:r.email||'',
       ACCIÓN:r.actionCode||'',
       COMISIÓN:r.commissionCode||'',
+      AÑO:r.dataYear||'',
+      UNIVERSO:r.universe||'',
+      'ES DAR':r.isDar||'',
       ESCUELA:upper(r.school)||'',
       CUE:r.cue||'',
       CUEANEXO:r.cueAnexo||'',
@@ -4178,7 +4182,8 @@
   }
 
   function commissionExportRows(){
-    const regs=groupUnique(filtered.registrations,r=>r.commissionCode).sort((a,b)=>b.value-a.value);
+    const baseRows=filtered.registrations.length?filtered.registrations:filtered.attendance;
+    const regs=groupUnique(baseRows,r=>r.commissionCode).sort((a,b)=>b.value-a.value);
     const attMap=new Map(groupUnique(filtered.attendance,r=>r.commissionCode).map(x=>[x.label,x.value]));
     const props=new Map(filtered.proposals.map(p=>[p.code,p]));
     return regs.map(x=>{
@@ -4236,10 +4241,10 @@
       {INDICADOR:'Docentes asistentes',VALOR:attIds.size},
       {INDICADOR:'Asistencia %',VALOR:regIds.size?rate(attIds.size,regIds.size):''},
       {INDICADOR:'Presentismo %',VALOR:currentMetric?.presentism??''},
-      {INDICADOR:'Escuelas representadas',VALOR:unique(regs.map(schoolKey).filter(Boolean)).length},
+      {INDICADOR:'Escuelas representadas',VALOR:unique((regs.length?regs:atts).map(schoolKey).filter(Boolean)).length},
       {INDICADOR:'Escuelas participantes',VALOR:unique(atts.map(schoolKey).filter(Boolean)).length},
       {INDICADOR:'Bajas cruzadas',VALOR:(filtered.bajas||[]).length},
-      {INDICADOR:'Comisiones',VALOR:unique(regs.map(x=>x.commissionCode)).length},
+      {INDICADOR:'Comisiones',VALOR:unique((regs.length?regs:atts).map(x=>x.commissionCode)).length},
       {INDICADOR:'Registros de asistencia',VALOR:atts.length}
     ];
 

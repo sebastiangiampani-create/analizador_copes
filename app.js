@@ -1533,7 +1533,7 @@
       if(baseDate && !meetingCols.length) meetingCols.push({label:'Encuentro',text:formatDate(pick(m,['Fecha'])),date:baseDate});
       return {
         actionCode:code, code:pcode, commission,
-        dataYear:rowYear(raw,m,(eventDate||'').slice(0,4)||year),
+        dataYear:rowYear(raw,m,(baseDate||meetingCols[0]?.date||'').slice(0,4)||year),
         universe:rowUniverse(raw,m),
         isDar:rowDar(raw,m),
         area:String(pickExact(raw,['Área','Area'])||pick(m,['Área','Area'])||'').trim(),
@@ -1560,9 +1560,10 @@
       const surname=String(pickExact(raw,['Apellido','Apellido/s'])||pick(m,['Apellido','Apellido/s'])||'').trim();
       const areaValue=String(pickExact(raw,['Área','Area'])||pick(m,['Área','Area'])||p?.area||'').trim();
       const cueAnexo=String(pick(m,['CUEANEXO','Cueanexo','CUE Anexo'])||extractCueAnexo(schoolRaw)||'').trim();
+      const registrationDate=isoDate(pick(m,['FECHA','Fecha','Fecha y hora']),year);
       const row={
         actionCode:code, commissionCode:pcode,
-        dataYear:rowYear(raw,m,year),
+        dataYear:rowYear(raw,m,(registrationDate||'').slice(0,4)||year),
         universe:rowUniverse(raw,m),
         isDar:rowDar(raw,m),
         encounter:encounterValue(raw,m),
@@ -1589,7 +1590,7 @@
         venue:String(pick(m,['Sede'])||p?.venue||'').trim(),
         shift:String(pickExact(raw,['TURNO','Turno'])||pick(m,['Turno'])||p?.shift||'').trim(),
         tutor:String(pickExact(raw,['TUTOR','Tutor','CAPACITADOR','Capacitador'])||pick(m,['Tutor','Capacitador'])||(p?.tutors||[]).join(' · ')||'').trim(),
-        registrationDate:isoDate(pick(m,['FECHA','Fecha','Fecha y hora']),year),
+        registrationDate,
         source:file.name
       };
       row.cargoClass=classifyCargo(row.cargo);
@@ -1618,7 +1619,7 @@
       const cueAnexo=String(pick(m,['CUEANEXO','Cueanexo','CUE Anexo'])||extractCueAnexo(schoolRaw)||'').trim();
       const row={
         actionCode:code, commissionCode:pcode,
-        dataYear:rowYear(raw,m,year),
+        dataYear:rowYear(raw,m,(eventDate||'').slice(0,4)||year),
         universe:rowUniverse(raw,m),
         isDar:rowDar(raw,m),
         dni:String(pick(m,['DNI'])||'').replace(/\.0$/,'').trim(),
@@ -1818,6 +1819,9 @@
             attendance:0,
             bajas:(support.bajas||[]).length,
             tutors:(support.tutors||[]).length,
+            masterSchools:(support.masterSchools||[]).length,
+            masterAreas:(support.masterAreas||[]).length,
+            masterCargos:(support.masterCargos||[]).length,
             supportOnly:true,
             when:new Date().toISOString(),
             mismatches:[]
@@ -1901,7 +1905,7 @@
             <div><span class="import-code">${esc(r.code||'AUX')}</span> · <strong>${esc(r.title||'Base auxiliar')}</strong></div>
             <span class="badge">Auxiliar</span>
           </div>
-          <div class="import-meta">${r.bajas||0} bajas · ${r.tutors||0} tutores/capacitadores${when?' · '+esc(when):''}</div>
+          <div class="import-meta">${r.bajas||0} bajas · ${r.tutors||0} tutores/capacitadores${r.masterSchools?' · '+r.masterSchools+' escuelas':''}${r.masterAreas?' · '+r.masterAreas+' áreas':''}${r.masterCargos?' · '+r.masterCargos+' cargos':''}${when?' · '+esc(when):''}</div>
         </div>`;
       }
       const action=dataset.actions.find(a=>a.code===r.code)||{};

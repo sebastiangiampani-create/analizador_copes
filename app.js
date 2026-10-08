@@ -2,7 +2,7 @@
   const DB_NAME = 'analizador_copes_v1';
   const STORE = 'state';
   const KEY = 'dataset';
-  const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], bajas: [], tutors: [], imports: [], sources: [], manualTutorCatalog: [], manualTutorAssignments: [], savedFilters: [], customFields: [], masters:{schools:[],areas:[],cargos:[]} };
+  const EMPTY = { actions: [], proposals: [], registrations: [], attendance: [], bajas: [], tutors: [], imports: [], sources: [], manualTutorCatalog: [], manualTutorAssignments: [], savedFilters: [], customFields: [], masters:{schools:[],areas:[],cargos:[],tutors:[]} };
   const REMOTE_ENDPOINT = 'https://qchnawvoensqnynsuhfu.supabase.co/functions/v1/copes-state';
   const REMOTE_KEY_STORAGE = 'analizador_copes_workspace_key_v1';
   const TUTOR_COURSE_SOURCE={
@@ -226,10 +226,11 @@
     if(!Array.isArray(dataset.manualTutorAssignments)) dataset.manualTutorAssignments=[];
     dataset.savedFilters=[];
     dataset.customFields=[];
-    if(!dataset.masters || typeof dataset.masters!=='object') dataset.masters={schools:[],areas:[],cargos:[]};
+    if(!dataset.masters || typeof dataset.masters!=='object') dataset.masters={schools:[],areas:[],cargos:[],tutors:[]};
     if(!Array.isArray(dataset.masters.schools)) dataset.masters.schools=[];
     if(!Array.isArray(dataset.masters.areas)) dataset.masters.areas=[];
     if(!Array.isArray(dataset.masters.cargos)) dataset.masters.cargos=[];
+    if(!Array.isArray(dataset.masters.tutors)) dataset.masters.tutors=[];
   }
   async function clearState(){
     const db=await openDb();
@@ -582,7 +583,8 @@
       dataset.masters={
         schools:Array.isArray(remote.masters?.schools)?remote.masters.schools:[],
         areas:Array.isArray(remote.masters?.areas)?remote.masters.areas:[],
-        cargos:Array.isArray(remote.masters?.cargos)?remote.masters.cargos:[]
+        cargos:Array.isArray(remote.masters?.cargos)?remote.masters.cargos:[],
+        tutors:Array.isArray(remote.masters?.tutors)?remote.masters.tutors:[]
       };
 
       for(let i=0;i<actionIndex.length;i++){
@@ -1224,7 +1226,19 @@
 
     const byAction=new Map(), byActionDate=new Map(), byCommission=new Map(), byCourseName=new Map();
 
-    for(const t of dataset.tutors||[]){
+    const tutorSources=[
+      ...(dataset.tutors||[]),
+      ...((dataset.masters?.tutors||[]).map(t=>({
+        actionCode:t.actionCode||t.action_code||'',
+        commissionCode:t.commissionCode||t.commission_code||'',
+        courseName:t.courseName||t.course_name||'',
+        name:t.name||t.tutorName||t.tutor_name||'',
+        date:t.date||'',
+        sourceKind:'tutor_courses',
+        authoritative:true
+      })))
+    ];
+    for(const t of tutorSources){
       if(!t.actionCode||!t.name)continue;
       const action=t.actionCode;
       const commissionKey=canonicalCommissionKey(t.commissionCode||'');
@@ -1391,12 +1405,18 @@
     const areaRows=sheetRows('areas');
     const cargoRows=sheetRows('cargos');
     const tutors=parseTutorRows(tutorRows,'',file.name,{sourceKind:'tutor_courses',authoritative:true});
+    const masterTutors=tutors.map(t=>({
+      action_code:t.actionCode,
+      commission_code:t.commissionCode||'',
+      tutor_name:t.name,
+      active:true
+    }));
     const bajas=parseSupportBajaRows(bajaRows,'',file.name);
     const masterSchools=parseSchoolMasterRows(schoolRows);
     const masterAreas=parseAreaMasterRows(areaRows);
     const masterCargos=parseCargoMasterRows(cargoRows);
     if(!tutors.length&&!bajas.length&&!masterSchools.length&&!masterAreas.length&&!masterCargos.length)return null;
-    return {supportOnly:true,file:file.name,tutors,bajas,masterSchools,masterAreas,masterCargos};
+    return {supportOnly:true,file:file.name,tutors,masterTutors,bajas,masterSchools,masterAreas,masterCargos};
   }
 
   function mergeSupportWorkbook(parsed){
@@ -1430,6 +1450,17 @@
       dataset.masters={...(dataset.masters||{}),cargos:[...byCargo.values()]};
       cargoLookupMemoSource=null;
       cargoLookupMemo=null;
+    }
+
+    if((parsed.masterTutors||[]).length){
+      const keyOf=t=>[
+        String(t.action_code||t.actionCode||'').toUpperCase(),
+        canonicalCommissionKey(t.commission_code||t.commissionCode||''),
+        normalize(t.tutor_name||t.name||'')
+      ].join('|');
+      const byTutor=new Map((dataset.masters?.tutors||[]).map(t=>[keyOf(t),t]));
+      for(const tutor of parsed.masterTutors)byTutor.set(keyOf(tutor),tutor);
+      dataset.masters={...(dataset.masters||{}),tutors:[...byTutor.values()]};
     }
 
     for(const code of tutorCodes){
@@ -1807,6 +1838,7 @@
             if((support.masterSchools||[]).length)await remoteRequest('upsert_masters',{kind:'schools',rows:support.masterSchools});
             if((support.masterAreas||[]).length)await remoteRequest('upsert_masters',{kind:'areas',rows:support.masterAreas});
             if((support.masterCargos||[]).length)await remoteRequest('upsert_masters',{kind:'cargos',rows:support.masterCargos});
+            if((support.masterTutors||[]).length)await remoteRequest('upsert_masters',{kind:'tutors',rows:support.masterTutors});
           }
           results.push({
             ok:true,

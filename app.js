@@ -906,30 +906,43 @@
     const byNorm=areaLookupMemo||new Map();
     const n=normalize(raw);
     if(byNorm.has(n))return byNorm.get(n);
-    const aliases={
-      'arte':'Artes',
-      'educacion tecnologica':'Educ. Tecno./Tecno. de la Información',
-      'tecnologia de la informacion':'Educ. Tecno./Tecno. de la Información',
-      'economia y administracion':'Orientación en Economía y Administración',
-      'ciencias sociales y humanidades':'Orientación en Ciencias Sociales y Humanidades',
-      'comunicacion':'Orientación en Comunicación',
-      'informatica':'Orientación en Informática',
-      'matematica y fisica':'Orientación en Matemática y Física',
-      'literatura':'Orientación en Literatura'
-    };
-    return aliases[n] || '';
+
+    // Aproximación genérica guiada por el maestro: no hay alias de áreas escritos a mano.
+    const tokens=new Set(n.split(' ').filter(x=>x.length>2));
+    let best='',bestScore=0;
+    for(const area of areas){
+      const an=normalize(area.area_norm||area.area);
+      if(!an)continue;
+      const at=new Set(an.split(' ').filter(x=>x.length>2));
+      const common=[...tokens].filter(x=>at.has(x)).length;
+      const union=new Set([...tokens,...at]).size||1;
+      let score=common/union;
+      if(n===an)score=1;
+      else if(n.includes(an)||an.includes(n))score=Math.max(score,.82);
+      if(score>bestScore){bestScore=score;best=area.area}
+    }
+    return bestScore>=.55?best:'';
+  }
+
+  function cargoMasterFor(v=''){
+    const raw=String(v||'').trim();
+    if(!raw)return null;
+    const cargos=dataset.masters?.cargos||[];
+    if(cargoLookupMemoSource!==cargos){
+      cargoLookupMemoSource=cargos;
+      cargoLookupMemo=new Map(cargos.map(x=>[normalize(x.origen),x]));
+    }
+    return (cargoLookupMemo||new Map()).get(normalize(raw))||null;
   }
 
   function classifyCargo(v=''){
     const raw=String(v||'').trim();
     if(!raw)return '';
-    const cargos=dataset.masters?.cargos||[];
-    if(cargoLookupMemoSource!==cargos){
-      cargoLookupMemoSource=cargos;
-      cargoLookupMemo=new Map(cargos.map(x=>[normalize(x.origen),x.categoria]));
-    }
-    const n=normalize(raw);
-    return String((cargoLookupMemo||new Map()).get(n)||raw).trim();
+    return String(cargoMasterFor(raw)?.categoria||raw).trim();
+  }
+
+  function areaFromCargo(v=''){
+    return String(cargoMasterFor(v)?.area||'').trim();
   }
 
   function enrichMasterRow(row,index=schoolMasterIndexes()){
@@ -950,7 +963,8 @@
       out.dependency=String(out.dependency||'').trim() || parseDependencyFromSchool(out.schoolRaw||out.school||'');
       out.masterSchoolMatched=false;
     }
-    out.areaClass=classifyArea(out.area)||out.areaClass||'';
+    if(!String(out.area||'').trim())out.area=areaFromCargo(out.cargo)||'';
+    out.areaClass=classifyArea(out.area)||out.areaClass||out.area||'';
     out.cargoClass=classifyCargo(out.cargo)||out.cargoClass||'';
     return out;
   }
@@ -1316,6 +1330,51 @@
     }).filter(r=>r.cueanexo&&r.nombre);
   }
 
+  function parseAreaMasterRows(rows=[]){
+    return (rows||[]).map((raw,i)=>{
+      const m=mapRow(raw);
+      const area=String(
+        pickExact(raw,['ÀREAS','ÁREAS','AREAS','Área','Area']) ||
+        pick(m,['ÀREAS','ÁREAS','AREAS','Área','Area']) || ''
+      ).trim();
+      return area?{area,area_norm:normalize(area),sort_order:i+1,active:true}:null;
+    }).filter(Boolean);
+  }
+
+  function parseCargoMasterRows(rows=[]){
+    const seen=new Set();
+    const out=[];
+    for(const raw of rows||[]){
+      const m=mapRow(raw);
+      const origen=String(pickExact(raw,['Cargo','CARGO'])||pick(m,['Cargo'])||'').trim();
+      if(!origen)continue;
+      const key=normalize(origen);
+      if(seen.has(key))continue;
+      seen.add(key);
+      const categoria=String(
+        pickExact(raw,['Cargo clasif','Cargo Clasif','CARGO CLASIF','Categoría','Categoria']) ||
+        pick(m,['Cargo clasif','Categoría','Categoria']) || origen
+      ).trim();
+      const cargoGeneral=String(
+        pickExact(raw,['Cargo gral','Cargo Gral','CARGO GRAL','Cargo general']) ||
+        pick(m,['Cargo gral','Cargo general']) || ''
+      ).trim();
+      const area=String(
+        pickExact(raw,['Àrea','Área','Area','ÀREA','ÁREA']) ||
+        pick(m,['Àrea','Área','Area']) || ''
+      ).trim();
+      out.push({
+        origen,
+        categoria,
+        categoria_norm:normalize(origen),
+        cargo_general:cargoGeneral,
+        area,
+        active:true
+      });
+    }
+    return out;
+  }
+
   function parseSupportWorkbook(file,wb){
     const names=wb.SheetNames||[];
     const normalized=names.map(n=>({name:n,norm:normalize(n)}));
@@ -1329,11 +1388,15 @@
     const tutorRows=sheetRows('tutor');
     const bajaRows=sheetRows('baja');
     const schoolRows=sheetRows('padron');
-    const tutors=parseTutorRows(tutorRows,'',file.name);
+    const areaRows=sheetRows('areas');
+    const cargoRows=sheetRows('cargos');
+    const tutors=parseTutorRows(tutorRows,'',file.name,{sourceKind:'tutor_courses',authoritative:true});
     const bajas=parseSupportBajaRows(bajaRows,'',file.name);
     const masterSchools=parseSchoolMasterRows(schoolRows);
-    if(!tutors.length&&!bajas.length&&!masterSchools.length)return null;
-    return {supportOnly:true,file:file.name,tutors,bajas,masterSchools};
+    const masterAreas=parseAreaMasterRows(areaRows);
+    const masterCargos=parseCargoMasterRows(cargoRows);
+    if(!tutors.length&&!bajas.length&&!masterSchools.length&&!masterAreas.length&&!masterCargos.length)return null;
+    return {supportOnly:true,file:file.name,tutors,bajas,masterSchools,masterAreas,masterCargos};
   }
 
   function mergeSupportWorkbook(parsed){
@@ -1351,6 +1414,22 @@
       dataset.masters={...(dataset.masters||{}),schools:[...byAnexo.values()]};
       schoolIndexMemoSource=null;
       schoolIndexMemo=null;
+    }
+
+    if((parsed.masterAreas||[]).length){
+      const byArea=new Map((dataset.masters?.areas||[]).map(x=>[normalize(x.area),x]));
+      for(const area of parsed.masterAreas)byArea.set(normalize(area.area),area);
+      dataset.masters={...(dataset.masters||{}),areas:[...byArea.values()]};
+      areaLookupMemoSource=null;
+      areaLookupMemo=null;
+    }
+
+    if((parsed.masterCargos||[]).length){
+      const byCargo=new Map((dataset.masters?.cargos||[]).map(x=>[normalize(x.origen),x]));
+      for(const cargo of parsed.masterCargos)byCargo.set(normalize(cargo.origen),cargo);
+      dataset.masters={...(dataset.masters||{}),cargos:[...byCargo.values()]};
+      cargoLookupMemoSource=null;
+      cargoLookupMemo=null;
     }
 
     for(const code of tutorCodes){
@@ -1454,7 +1533,7 @@
       if(baseDate && !meetingCols.length) meetingCols.push({label:'Encuentro',text:formatDate(pick(m,['Fecha'])),date:baseDate});
       return {
         actionCode:code, code:pcode, commission,
-        dataYear:rowYear(raw,m,year),
+        dataYear:rowYear(raw,m,(eventDate||'').slice(0,4)||year),
         universe:rowUniverse(raw,m),
         isDar:rowDar(raw,m),
         area:String(pickExact(raw,['Área','Area'])||pick(m,['Área','Area'])||'').trim(),
@@ -1723,14 +1802,16 @@
         if(support){
           const codes=mergeSupportWorkbook(support);
           successfulCodes.push(...codes);
-          if((support.masterSchools||[]).length && remoteReady){
-            await remoteRequest('upsert_masters',{kind:'schools',rows:support.masterSchools});
+          if(remoteReady){
+            if((support.masterSchools||[]).length)await remoteRequest('upsert_masters',{kind:'schools',rows:support.masterSchools});
+            if((support.masterAreas||[]).length)await remoteRequest('upsert_masters',{kind:'areas',rows:support.masterAreas});
+            if((support.masterCargos||[]).length)await remoteRequest('upsert_masters',{kind:'cargos',rows:support.masterCargos});
           }
           results.push({
             ok:true,
             updated:true,
             code:codes.join(', ') || 'PADRÓN',
-            title:(support.masterSchools||[]).length?'Base auxiliar · Padrón maestro':'Base auxiliar',
+            title:(support.masterSchools||[]).length||(support.masterAreas||[]).length||(support.masterCargos||[]).length?'Base auxiliar · Maestros':'Base auxiliar',
             file:file.name,
             proposals:0,
             registrations:0,

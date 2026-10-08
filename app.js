@@ -36,13 +36,15 @@
     doughnut:'Torta anillo',
     pie:'Torta',
     polarArea:'Área polar',
-    radar:'Radar'
+    radar:'Radar',
+    treemap:'Mapa de árbol',
+    pareto:'Pareto'
   };
   const CHART_META={
     attendanceChart:{title:'Presentismo por fecha',defaultType:'line',allowed:['line','bar']},
     presentismPercentChart:{title:'% de presentismo por fecha',defaultType:'bar',allowed:['bar','line']},
     areaCompareChart:{title:'Inscriptos vs asistentes por área',defaultType:'hbar',allowed:['bar','hbar','line','radar']},
-    areaChart:{title:'Docentes por área',defaultType:'hbar',allowed:['bar','hbar','doughnut','pie','polarArea','radar']},
+    areaChart:{title:'Docentes por área',defaultType:'hbar',allowed:['bar','hbar','doughnut','pie','polarArea','radar','treemap','pareto']},
     dependencyChart:{title:'Por dependencia',defaultType:'hbar',allowed:['bar','hbar','doughnut','pie','polarArea']},
     commissionChart:{title:'Comisiones',defaultType:'bar',allowed:['bar','hbar','line','radar']},
     schoolChart:{title:'Escuelas',defaultType:'hbar',allowed:['bar','hbar','doughnut','pie','polarArea']},
@@ -2577,14 +2579,85 @@
       if(charts[id])charts[id].destroy();
       const ctx=document.getElementById(id); if(!ctx)return;
       const meta=CHART_META[id]||{};
-      const selected=chartPrefs[id]||meta.defaultType||type;
-      const actualType=selected==='hbar'?'bar':selected;
+      let selected=chartPrefs[id]||meta.defaultType||type;
+      const treemapReady=!!globalThis.Chart?.registry?.controllers?.get?.('treemap');
+      if(selected==='treemap'&&!treemapReady)selected='hbar';
+
+      if(selected==='treemap'){
+        const base=datasets?.[0]||{label:'Docentes',data:[]};
+        const tree=labels.map((label,i)=>({label,value:Number(base.data?.[i])||0})).filter(x=>x.value>0);
+        charts[id]=new Chart(ctx,{
+          type:'treemap',
+          data:{datasets:[{
+            label:base.label||'Docentes',
+            tree,
+            key:'value',
+            groups:['label'],
+            spacing:1,
+            borderWidth:1,
+            backgroundColor(c){
+              const i=(c.dataIndex||0)%PALETTE.length;
+              return PALETTE[i];
+            },
+            labels:{
+              display:true,
+              color:'#fff',
+              formatter(c){
+                const raw=c.raw?._data||{};
+                const label=raw.label||c.raw?.g||'';
+                const value=raw.value??c.raw?.v??'';
+                return [String(label),String(value)];
+              }
+            }
+          }]},
+          options:{
+            responsive:true,
+            maintainAspectRatio:false,
+            plugins:{
+              legend:{display:false},
+              tooltip:{
+                callbacks:{
+                  title(items){return items?.[0]?.raw?._data?.label||''},
+                  label(item){
+                    const d=item.raw?._data||{};
+                    return (base.label||'Docentes')+': '+(d.value??item.raw?.v??0);
+                  }
+                }
+              }
+            }
+          }
+        });
+        const selector=document.querySelector('[data-chart-type="'+id+'"]');
+        if(selector && selector.value!==selected)selector.value=selected;
+        return;
+      }
+
+      const pareto=selected==='pareto';
+      const actualType=selected==='hbar'||pareto?'bar':selected;
       const radial=['doughnut','pie','polarArea'].includes(actualType);
       const radar=actualType==='radar';
-      const styled=datasets.map((d,i)=>{
+      let sourceDatasets=datasets;
+      let paretoScales=null;
+      if(pareto){
+        const base=datasets?.[0]||{label:'Docentes',data:[]};
+        const vals=(base.data||[]).map(v=>Number(v)||0);
+        const total=vals.reduce((a,b)=>a+b,0)||1;
+        let running=0;
+        const cumulative=vals.map(v=>Math.round((running+=v)/total*1000)/10);
+        sourceDatasets=[
+          {...base,type:'bar',yAxisID:'y'},
+          {label:'% acumulado',data:cumulative,type:'line',yAxisID:'y1',tension:.2,pointRadius:2}
+        ];
+        paretoScales={
+          x:{grid:{display:false},ticks:{maxRotation:45,minRotation:0,color:'#7a8790',font:{size:9}}},
+          y:{beginAtZero:true,grid:{color:'#edf1f3'},ticks:{color:'#7a8790',font:{size:9}}},
+          y1:{beginAtZero:true,max:100,position:'right',grid:{drawOnChartArea:false},ticks:{callback:v=>v+'%',color:'#7a8790',font:{size:9}}}
+        };
+      }
+      const styled=sourceDatasets.map((d,i)=>{
         if(radial) return {...d,backgroundColor:labels.map((_,j)=>PALETTE[j%PALETTE.length]),borderWidth:0,hoverOffset:4};
         if(radar) return {...d,borderColor:PALETTE[i%PALETTE.length],backgroundColor:'rgba(22,117,102,.08)',pointBackgroundColor:PALETTE[i%PALETTE.length],pointRadius:2,borderWidth:2,fill:true};
-        if(actualType==='line') return {...d,borderColor:PALETTE[i%PALETTE.length],backgroundColor:'rgba(22,117,102,.08)',pointBackgroundColor:PALETTE[i%PALETTE.length],pointRadius:3,borderWidth:2.2};
+        if(d.type==='line'||actualType==='line') return {...d,borderColor:PALETTE[i%PALETTE.length],backgroundColor:'rgba(22,117,102,.08)',pointBackgroundColor:PALETTE[i%PALETTE.length],pointRadius:3,borderWidth:2.2};
         return {...d,backgroundColor:PALETTE[i%PALETTE.length],borderRadius:6,borderSkipped:false,maxBarThickness:38};
       });
       const defaultScales={
@@ -2601,9 +2674,9 @@
         }
       };
       if(!radial&&!radar){
-        options.scales=extra.scales||defaultScales;
+        options.scales=paretoScales||extra.scales||defaultScales;
         if(selected==='hbar')options.indexAxis='y';
-        else if(extra.indexAxis && !chartPrefs[id])options.indexAxis=extra.indexAxis;
+        else if(extra.indexAxis && !chartPrefs[id]&&!pareto)options.indexAxis=extra.indexAxis;
       }
       for(const [k,v] of Object.entries(extra||{})){
         if(k==='scales'||k==='indexAxis')continue;
@@ -2614,6 +2687,10 @@
       if(selector && selector.value!==selected)selector.value=selected;
     }catch(e){
       console.error('Error renderizando gráfico '+id,e);
+      if((chartPrefs[id]||'')==='treemap'){
+        chartPrefs[id]='hbar';
+        saveChartPrefs();
+      }
     }
   }
 

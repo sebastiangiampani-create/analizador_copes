@@ -182,10 +182,12 @@
     return String(v||'').trim();
   }
   function encounterValue(raw,m){
-    return String(
+    const value=String(
       pickExact(raw,['ENCUENTRO','Encuentro','N° ENCUENTRO','Nº ENCUENTRO','NRO ENCUENTRO','Encuentro N°','Encuentro N']) ||
       pick(m,['ENCUENTRO','Encuentro','N° ENCUENTRO','Nº ENCUENTRO','NRO ENCUENTRO','Encuentro N°','Encuentro N','Enc.']) || ''
     ).trim();
+    const n=encounterNumber(value);
+    return n?'E'+n:value;
   }
   function encounterNumber(v=''){
     const raw=String(v||'').trim();

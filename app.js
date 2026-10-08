@@ -82,11 +82,14 @@
     filterSector:{label:'SECTOR DE GESTIÓN'},
     filterComuna:{label:'COMUNA'},
     filterStatus:{label:'ESTADO'},
+    filterYear:{label:'AÑO'},
+    filterEncounter:{label:'ENCUENTRO'},
     filterTutor:{label:'Tutor / capacitador'},
     filterArea:{label:'Área'},
     filterVenue:{label:'Sede'},
     filterShift:{label:'Turno'},
-    filterCargo:{label:'Cargo'}
+    filterCargo:{label:'Cargo'},
+    filterDar:{label:'Es DAR'}
   };
   const multiFilterState={};
   if(!Array.isArray(reportDraft.items))reportDraft.items=[];
@@ -108,8 +111,9 @@
   const parseActionCode = (v='',allowBare=false) => {
     const raw=String(v ?? '').trim().toUpperCase();
     if(!raw)return '';
-    const m=raw.match(/C[\s_-]?(\d{4})(?!\d)/i);
-    if(m)return 'C'+m[1];
+    // Acepta C0611, C611, CO611 y CO0611 y normaliza siempre a C####.
+    const m=raw.match(/\bC(?:O)?[\s_-]?0*(\d{1,4})(?!\d)/i);
+    if(m)return 'C'+m[1].padStart(4,'0');
     if(allowBare){
       const b=raw.match(/^0*(\d{1,4})$/);
       if(b)return 'C'+b[1].padStart(4,'0');
@@ -120,9 +124,11 @@
   const actionCodeValue = (v='') => parseActionCode(v,true);
   const codeIn = (v='') => {
     const raw=String(v ?? '').trim().toUpperCase();
-    const m=raw.match(/C[\s_-]?(\d{4})(?:[-_](\d+))?/i);
+    const m=raw.match(/\bC(?:O)?[\s_-]?0*(\d{1,4})(?:[-_\s]+([A-Z0-9]+(?:[-_][A-Z0-9]+)*))?/i);
     if(!m)return '';
-    return 'C'+m[1]+(m[2]?'-'+m[2]:'');
+    const action='C'+m[1].padStart(4,'0');
+    const suffix=String(m[2]||'').replace(/_/g,'-').replace(/^-+|-+$/g,'');
+    return action+(suffix?'-'+suffix:'');
   };
   const num = (v) => Number(String(v ?? '').replace(',','.')) || 0;
   const unique = (arr) => [...new Set(arr.filter(v => v !== null && v !== undefined && String(v).trim() !== '').map(v => String(v).trim()))];
@@ -152,6 +158,44 @@
     return String(v||'').trim();
   };
   const upper = (v='') => String(v||'').trim().toUpperCase();
+
+  function rowYear(raw,m,fallbackYear=''){
+    const direct=pickExact(raw,['AÑO','Año','ANO','Ano','YEAR','Year']) || pick(m,['AÑO','Año','ANO','Ano','YEAR','Year']);
+    const n=String(direct||'').match(/20\d{2}/)?.[0];
+    return n||String(fallbackYear||'');
+  }
+  function rowUniverse(raw,m){
+    return String(
+      pickExact(raw,['UNIVERSO','Universo','UNIVERSO PRESENTISMO','Universo presentismo']) ||
+      pick(m,['UNIVERSO','Universo','UNIVERSO PRESENTISMO','Universo presentismo']) || ''
+    ).trim();
+  }
+  function rowDar(raw,m){
+    const v=pickExact(raw,['ES DAR','Es DAR','DAR','Es dar']) || pick(m,['ES DAR','Es DAR','DAR']);
+    if(v===true)return 'Sí';
+    if(v===false)return 'No';
+    const n=normalize(v);
+    if(['si','s','yes','true','1','dar'].includes(n))return 'Sí';
+    if(['no','n','false','0'].includes(n))return 'No';
+    return String(v||'').trim();
+  }
+  function encounterValue(raw,m){
+    return String(
+      pickExact(raw,['ENCUENTRO','Encuentro','N° ENCUENTRO','Nº ENCUENTRO','NRO ENCUENTRO','Encuentro N°','Encuentro N']) ||
+      pick(m,['ENCUENTRO','Encuentro','N° ENCUENTRO','Nº ENCUENTRO','NRO ENCUENTRO','Encuentro N°','Encuentro N','Enc.']) || ''
+    ).trim();
+  }
+  function encounterNumber(v=''){
+    const raw=String(v||'').trim();
+    const m=raw.match(/(?:encuentro|enc\.?|e)?\s*#?\s*(\d+)/i);
+    return m?String(Number(m[1])):'';
+  }
+  function encounterLabel(encounter,date=''){
+    const n=encounterNumber(encounter);
+    const e=n?'E'+n:(String(encounter||'').trim()||'');
+    const d=date?formatDate(date):'';
+    return [e,d].filter(Boolean).join(' · ') || d || e || 'Sin encuentro';
+  }
 
   function toast(msg){
     const el = $('#toast'); el.textContent = msg; el.classList.add('show');
@@ -1405,6 +1449,9 @@
       if(baseDate && !meetingCols.length) meetingCols.push({label:'Encuentro',text:formatDate(pick(m,['Fecha'])),date:baseDate});
       return {
         actionCode:code, code:pcode, commission,
+        dataYear:rowYear(raw,m,year),
+        universe:rowUniverse(raw,m),
+        isDar:rowDar(raw,m),
         area:String(pickExact(raw,['Área','Area'])||pick(m,['Área','Area'])||'').trim(),
         areaClass:classifyArea(pickExact(raw,['Área','Area'])||pick(m,['Área','Area'])||''),
         formation:String(pick(m,['Formación','Formacion'])||'').trim(),
@@ -1431,6 +1478,10 @@
       const cueAnexo=String(pick(m,['CUEANEXO','Cueanexo','CUE Anexo'])||extractCueAnexo(schoolRaw)||'').trim();
       const row={
         actionCode:code, commissionCode:pcode,
+        dataYear:rowYear(raw,m,year),
+        universe:rowUniverse(raw,m),
+        isDar:rowDar(raw,m),
+        encounter:encounterValue(raw,m),
         dni:String(pick(m,['DNI'])||'').replace(/\.0$/,'').trim(),
         cuil:String(pick(m,['Cuil','CUIL'])||'').trim(),
         firstName,surname,
@@ -1466,7 +1517,7 @@
       let pcode=codeIn(pick(m,['Codigo','Código','Comision','Comisión','Taller','Propuesta'])) || code;
       pcode=pcode.toUpperCase();
       const p=pMap.get(pcode);
-      const encounter=String(pick(m,['Encuentro','Encuentro N°','Encuentro N','Enc.'])||'').trim();
+      const encounter=encounterValue(raw,m);
       let eventDate='';
       if(p){
         const meet=encounter ? p.meetings.find(x=>normalize(x.label)===normalize(encounter)) : p.meetings[0];
@@ -1480,6 +1531,9 @@
       const cueAnexo=String(pick(m,['CUEANEXO','Cueanexo','CUE Anexo'])||extractCueAnexo(schoolRaw)||'').trim();
       const row={
         actionCode:code, commissionCode:pcode,
+        dataYear:rowYear(raw,m,year),
+        universe:rowUniverse(raw,m),
+        isDar:rowDar(raw,m),
         dni:String(pick(m,['DNI'])||'').replace(/\.0$/,'').trim(),
         firstName,surname,
         name:[firstName,surname].filter(Boolean).join(' ').trim(),
@@ -1519,6 +1573,9 @@
       const cueAnexo=String(pick(m,['CUEANEXO','Cueanexo','CUE Anexo'])||extractCueAnexo(schoolRaw)||'').trim();
       const row={
         actionCode:code,
+        dataYear:rowYear(raw,m,year),
+        universe:rowUniverse(raw,m),
+        isDar:rowDar(raw,m),
         commissionCode:(codeIn(pick(m,['Codigo','Código','Comision','Comisión','Taller','Propuesta']))||'').toUpperCase(),
         dni:String(pick(m,['DNI'])||'').replace(/\.0$/,'').trim(),
         firstName,surname,
@@ -1924,6 +1981,8 @@
       sectors:multiFilterValues('filterSector'),
       comunas:multiFilterValues('filterComuna'),
       statuses:multiFilterValues('filterStatus'),
+      years:multiFilterValues('filterYear'),
+      encounters:multiFilterValues('filterEncounter'),
       dates:unique([
         ...selectedValues($('#filterDate')),
         ...splitManualList($('#filterDateManual').value).map(normalizeManualDate).filter(Boolean)
@@ -1933,6 +1992,7 @@
       venues:multiFilterValues('filterVenue'),
       shifts:multiFilterValues('filterShift'),
       cargos:multiFilterValues('filterCargo'),
+      darValues:multiFilterValues('filterDar'),
       excludeSurnames:[],
       excludeDates:[],
       q:normalize($('#globalSearch').value)
@@ -1947,13 +2007,16 @@
     if(!multiFilterMatch(r.sector,f.sectors))return false;
     if(!multiFilterMatch(r.comuna,f.comunas))return false;
     if(!multiFilterMatch(statusNorm(r.status),f.statuses))return false;
+    if(!multiFilterMatch(String(r.dataYear||r.year||''),f.years))return false;
+    if(!multiFilterMatch(r.encounter,f.encounters))return false;
     if(!multiFilterMatch(r.tutor,f.tutors))return false;
     if(!multiFilterMatch(r.area,f.areas))return false;
     if(!multiFilterMatch(r.venue,f.venues))return false;
     if(!multiFilterMatch(r.shift,f.shifts))return false;
     if(!multiFilterMatch(r.cargoClass||r.cargo,f.cargos))return false;
+    if(!multiFilterMatch(r.isDar,f.darValues))return false;
     if(f.q){
-      const hay=normalize([r.dni,r.name,r.email,r.school,r.cue,r.dependency,r.sector,r.comuna,r.status,rowDate(r),r.region,r.area,r.cargo,r.cargoClass,r.commissionCode,r.tutor,r.venue,r.shift].join(' '));
+      const hay=normalize([r.dni,r.name,r.email,r.school,r.cue,r.dependency,r.sector,r.comuna,r.status,rowDate(r),r.region,r.area,r.cargo,r.cargoClass,r.commissionCode,r.tutor,r.venue,r.shift,r.dataYear,r.encounter,r.universe,r.isDar].join(' '));
       if(!hay.includes(f.q))return false;
     }
     return true;
@@ -1990,7 +2053,7 @@
       || index.byActionPerson.get([r.actionCode,person].join('|'));
     if(!reg)return r;
     const out={...r};
-    for(const key of ['school','schoolRaw','cue','cueAnexo','dependency','sector','comuna','status','region','area','areaClass','cargo','cargoClass','formation','venue','shift','tutor','firstName','surname']){
+    for(const key of ['school','schoolRaw','cue','cueAnexo','dependency','sector','comuna','status','region','area','areaClass','cargo','cargoClass','formation','venue','shift','tutor','firstName','surname','dataYear','universe','isDar']){
       if(out[key]===null || out[key]===undefined || String(out[key]).trim()==='') out[key]=reg[key]||'';
     }
     return out;
@@ -2013,11 +2076,14 @@
     setMultiFilterOptions('filterSector',peopleRows.map(x=>x.sector));
     setMultiFilterOptions('filterComuna',peopleRows.map(x=>x.comuna));
     setMultiFilterOptions('filterStatus',peopleRows.map(x=>statusNorm(x.status)).filter(Boolean));
+    setMultiFilterOptions('filterYear',peopleRows.map(x=>x.dataYear||x.year).concat(props.map(x=>x.dataYear||x.year)));
+    setMultiFilterOptions('filterEncounter',atts.map(x=>x.encounter).filter(Boolean));
     setMultiFilterOptions('filterTutor',peopleRows.map(x=>x.tutor).concat(props.flatMap(x=>x.tutors||[])));
     setMultiFilterOptions('filterArea',peopleRows.map(x=>x.area).concat(props.map(x=>x.area)));
     setMultiFilterOptions('filterVenue',peopleRows.map(x=>x.venue).concat(props.map(x=>x.venue)));
     setMultiFilterOptions('filterShift',peopleRows.map(x=>x.shift).concat(props.map(x=>x.shift)));
     setMultiFilterOptions('filterCargo',peopleRows.map(x=>x.cargoClass||x.cargo));
+    setMultiFilterOptions('filterDar',peopleRows.map(x=>x.isDar).filter(Boolean));
     fillMultiSelect($('#filterDate'),atts.map(x=>x.eventDate).filter(Boolean),formatDate);
   }
   function selectedAction(){
@@ -2204,22 +2270,46 @@
     return true;
   }
   function eventMetrics(regs,atts){
-    const dates=unique(atts.map(x=>x.eventDate).filter(Boolean)).sort();
-    const hasRegistrationBase=(regs||[]).some(r=>idOf(r));
+    const groups=new Map();
+    for(const a of atts||[]){
+      const key=[a.encounter||'',a.eventDate||'',a.universe||'',a.dataYear||''].join('|');
+      if(!groups.has(key))groups.set(key,[]);
+      groups.get(key).push(a);
+    }
     const observedBase=new Set((atts||[]).map(idOf).filter(Boolean));
-    return dates.map(date=>{
-      const attendees=new Set(atts.filter(a=>a.eventDate===date).map(idOf).filter(Boolean));
-      const active=hasRegistrationBase
-        ? new Set(regs.filter(r=>activeAtDate(r,date)).map(idOf).filter(Boolean))
-        : observedBase;
+    return [...groups.values()].map(group=>{
+      const sample=group[0]||{};
+      const date=sample.eventDate||'';
+      const encounter=sample.encounter||'';
+      const universe=String(sample.universe||'').trim();
+      const dataYear=String(sample.dataYear||'').trim();
+      const attendees=new Set(group.map(idOf).filter(Boolean));
+
+      let denominatorRows=(regs||[]).filter(r=>activeAtDate(r,date));
+      let baseKind='registrations';
+      if(universe){
+        const universeRows=denominatorRows.filter(r=>normalize(r.universe)===normalize(universe));
+        if(universeRows.length)denominatorRows=universeRows;
+      }else if(dataYear){
+        const yearRows=denominatorRows.filter(r=>String(r.dataYear||r.year||'')===dataYear);
+        if(yearRows.length)denominatorRows=yearRows;
+      }
+      let active=new Set(denominatorRows.map(idOf).filter(Boolean));
+      if(!active.size){
+        active=observedBase;
+        baseKind='observed';
+      }else if(universe)baseKind='universe';
+      else if(dataYear)baseKind='year';
+
       return {
-        date,
+        date,encounter,universe,dataYear,
+        label:encounterLabel(encounter,date),
         attendees:attendees.size,
         active:active.size,
         presentism:rate(attendees.size,active.size),
-        baseKind:hasRegistrationBase?'registrations':'observed'
+        baseKind
       };
-    });
+    }).sort((a,b)=>(a.date||'').localeCompare(b.date||'') || (encounterNumber(a.encounter)||'999').localeCompare(encounterNumber(b.encounter)||'999',{numeric:true}));
   }
 
   function renderDashboard(){
@@ -2263,9 +2353,9 @@
       ? ('Promedio de '+selectedMetrics.length+' fechas seleccionadas'+(observedPresentism?' · base: participantes observados (sin padrón de inscriptos)':''))
       : (currentMetric
           ? formatDate(currentMetric.date)+' · '+currentMetric.attendees+'/'+currentMetric.active+
-            (currentMetric.baseKind==='observed'?' participantes observados':' activos')
+            (currentMetric.baseKind==='observed'?' participantes observados':currentMetric.baseKind==='universe'?' del universo '+currentMetric.universe:currentMetric.baseKind==='year'?' del año '+currentMetric.dataYear:' activos')
           : 'por encuentro: asistentes / activos');
-    chart('attendanceChart','line',metrics.map(x=>formatDate(x.date)),[
+    chart('attendanceChart','line',metrics.map(x=>x.label||formatDate(x.date)),[
       {label:'Docentes asistentes',data:metrics.map(x=>x.attendees),tension:.28,fill:false}
     ],{
       scales:{
@@ -2274,7 +2364,7 @@
       }
     });
 
-    chart('presentismPercentChart','bar',metrics.map(x=>formatDate(x.date)),[
+    chart('presentismPercentChart','bar',metrics.map(x=>x.label||formatDate(x.date)),[
       {label:'Presentismo %',data:metrics.map(x=>x.presentism),tension:.28,fill:false}
     ],{
       scales:{
@@ -2283,22 +2373,24 @@
       }
     });
 
-    const areaRegs=groupUnique(regs,r=>r.area||'Sin área').sort((a,b)=>b.value-a.value);
+    const areaBase=regs.length?regs:atts;
+    const areaRegs=groupUnique(areaBase,r=>r.area||'Sin área').sort((a,b)=>b.value-a.value);
     const areaAttMap=new Map(groupUnique(atts,r=>r.area||'Sin área').map(x=>[x.label,x.value]));
-    const areaCompare=areaRegs.slice(0,18);
+    const areaCompare=areaRegs;
     chart('areaCompareChart','bar',areaCompare.map(x=>x.label),[
       {label:'Inscriptos',data:areaCompare.map(x=>x.value)},
       {label:'Asistentes',data:areaCompare.map(x=>areaAttMap.get(x.label)||0)}
     ],{indexAxis:'y'});
 
-    const areaClass=groupUnique(regs,r=>r.areaClass||classifyArea(r.area)||'Otros / sin clasificación').sort((a,b)=>b.value-a.value);
+    const areaClass=groupUnique(areaBase,r=>r.areaClass||classifyArea(r.area)||'Otros / sin clasificación').sort((a,b)=>b.value-a.value);
     chart('areaChart','bar',areaClass.map(x=>x.label),[{label:'Docentes',data:areaClass.map(x=>x.value)}],{indexAxis:'y'});
 
     const dependencyBase=regs.length?regs:atts;
     const byDep=groupUnique(dependencyBase,r=>r.dependency||'Sin dependencia').sort((a,b)=>b.value-a.value).slice(0,10);
     chart('dependencyChart','bar',byDep.map(x=>x.label),[{label:regs.length?'Inscriptos':'Participantes',data:byDep.map(x=>x.value)}],{indexAxis:'y'});
 
-    const commRegs=groupUnique(regs,r=>r.commissionCode).sort((a,b)=>b.value-a.value).slice(0,24);
+    const commissionBase=regs.length?regs:atts;
+    const commRegs=groupUnique(commissionBase,r=>r.commissionCode).sort((a,b)=>b.value-a.value);
     const attByComm=new Map(groupUnique(atts,r=>r.commissionCode).map(x=>[x.label,x.value]));
     chart('commissionChart','bar',commRegs.map(x=>x.label),[
       {label:'Inscriptos',data:commRegs.map(x=>x.value)},
@@ -2316,7 +2408,7 @@
     const tutorAtt=groupUnique(atts,r=>r.tutor||'Sin tutor').sort((a,b)=>b.value-a.value).slice(0,10);
     chart('tutorChart','bar',tutorAtt.map(x=>x.label),[{label:'Asistentes',data:tutorAtt.map(x=>x.value)}],{indexAxis:'y'});
 
-    const cargoRows=regs.filter(r=>String(r.cargoClass||r.cargo||'').trim());
+    const cargoRows=(regs.length?regs:atts).filter(r=>String(r.cargoClass||r.cargo||'').trim());
     const cargoData=groupUnique(cargoRows,r=>r.cargoClass||classifyCargo(r.cargo)||r.cargo||'Sin cargo').sort((a,b)=>b.value-a.value).slice(0,14);
     const cargoEmpty=$('#cargoEmpty'), cargoCanvas=$('#cargoChart');
     if(cargoData.length){
@@ -2332,15 +2424,16 @@
     const shiftAtt=groupUnique(atts,r=>r.shift||'Sin turno').sort((a,b)=>b.value-a.value).slice(0,8);
     chart('shiftChart','doughnut',shiftAtt.map(x=>x.label),[{label:'Asistentes',data:shiftAtt.map(x=>x.value)}]);
 
-    const schoolBase=regs.length?regs:atts;
+    const schoolBase=regs.length?regs:[];
     const schools=groupUnique(schoolBase.filter(r=>schoolKey(r)),r=>schoolKey(r)).sort((a,b)=>b.value-a.value);
     const attSchool=new Map(groupUnique(atts.filter(r=>schoolKey(r)),r=>schoolKey(r)).map(x=>[x.label,x.value]));
     const schoolMeta=new Map();
     schoolBase.forEach(r=>{const k=schoolKey(r);if(k&&!schoolMeta.has(k))schoolMeta.set(k,r)});
-    $('#schoolTable').innerHTML=schools.slice(0,80).map(s=>{
-      const a=attSchool.get(s.label)||0,m=schoolMeta.get(s.label)||{};
-      return `<tr><td>${esc(m.cue||'Sin CUE')}</td><td>${esc(upper(m.school)||'—')}</td><td>${esc(upper(m.dependency)||'—')}</td><td>${s.value}</td><td>${a}</td><td>${rate(a,s.value).toLocaleString('es-AR')}%</td></tr>`
-    }).join('') || '<tr><td colspan="6" class="empty">Sin datos.</td></tr>';
+    const schoolsWithoutAttendance=schools.filter(x=>(attSchool.get(x.label)||0)===0);
+    $('#schoolTable').innerHTML=schoolsWithoutAttendance.slice(0,120).map(s=>{
+      const m=schoolMeta.get(s.label)||{};
+      return `<tr><td>${esc(m.cue||'Sin CUE')}</td><td>${esc(upper(m.school)||'—')}</td><td>${esc(upper(m.dependency)||'—')}</td><td>${s.value}</td></tr>`
+    }).join('') || '<tr><td colspan="4" class="empty">No hay escuelas sin asistencia con estos filtros.</td></tr>';
 
     const absentById=new Map();
     regs.filter(r=>!attIds.has(idOf(r))).forEach(r=>{const id=idOf(r);if(id&&!absentById.has(id))absentById.set(id,r)});

@@ -1002,11 +1002,13 @@
       pickExact(raw,[
         'CÓDIGO CURSO','CODIGO CURSO','Código curso','Codigo curso',
         'CÓDIGO COMISIÓN','CODIGO COMISION','Código comisión','Codigo comision',
+        'ACCIÓN / COMISIÓN','ACCION / COMISION','Acción / Comisión','Accion / Comision',
         'CURSO','Curso','COMISIÓN','COMISION','Comisión','Comision',
         'TALLER','Taller','PROPUESTA','Propuesta','CÓDIGO','CODIGO','Código','Codigo'
       ]) ||
       pick(m,[
         'CÓDIGO CURSO','CODIGO CURSO','CÓDIGO COMISIÓN','CODIGO COMISION',
+        'ACCIÓN / COMISIÓN','ACCION / COMISION',
         'CURSO','COMISIÓN','COMISION','TALLER','PROPUESTA','CÓDIGO','CODIGO'
       ]) || ''
     ).trim();
@@ -1029,8 +1031,11 @@
   function canonicalCommissionKey(value=''){
     const code=codeIn(value);
     if(!code)return normalize(value);
-    const m=code.match(/^(C\d{4})(?:-(\d+))?$/);
-    return m?.[2] ? m[1]+'-'+String(Number(m[2])) : (m?.[1]||code);
+    const parts=code.split('-');
+    const action=parts.shift();
+    if(!parts.length)return action;
+    const suffix=parts.join('-');
+    return /^\d+$/.test(suffix) ? action+'-'+String(Number(suffix)) : action+'-'+suffix.toUpperCase();
   }
 
   function parseTutorRows(rows,fallbackCode='',source='',options={}){
@@ -1520,7 +1525,10 @@
       const encounter=encounterValue(raw,m);
       let eventDate='';
       if(p){
-        const meet=encounter ? p.meetings.find(x=>normalize(x.label)===normalize(encounter)) : p.meetings[0];
+        const wantedNumber=encounterNumber(encounter);
+        const meet=encounter
+          ? p.meetings.find(x=>normalize(x.label)===normalize(encounter) || (wantedNumber&&encounterNumber(x.label)===wantedNumber))
+          : p.meetings[0];
         eventDate=meet?.date || '';
       }
       if(!eventDate) eventDate=isoDate(pick(m,['Fecha de encuentro','Fecha']),year);
@@ -1769,7 +1777,7 @@
     if(okCount){
       clearAllMultiFilters();
       syncActionFilterInput();
-      ['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterTutor','filterArea','filterVenue','filterShift','excludeDate'].forEach(id=>{const el=$('#'+id);if(el)el.value=''});
+      ['filterAction','filterSchool','filterDependency','filterSector','filterComuna','filterStatus','filterYear','filterEncounter','filterTutor','filterArea','filterVenue','filterShift','filterCargo','filterDar','excludeDate'].forEach(id=>{const el=$('#'+id);if(el)el.value=''});
       setSelectedValues($('#filterDate'),[]);if($('#filterDateManual'))$('#filterDateManual').value='';
       ['globalSearch','excludeSurname'].forEach(id=>{const el=$('#'+id);if(el)el.value=''});
       if($('#savedFilterSelect'))$('#savedFilterSelect').value='';
@@ -2008,7 +2016,6 @@
     if(!multiFilterMatch(r.comuna,f.comunas))return false;
     if(!multiFilterMatch(statusNorm(r.status),f.statuses))return false;
     if(!multiFilterMatch(String(r.dataYear||r.year||''),f.years))return false;
-    if(!multiFilterMatch(r.encounter,f.encounters))return false;
     if(!multiFilterMatch(r.tutor,f.tutors))return false;
     if(!multiFilterMatch(r.area,f.areas))return false;
     if(!multiFilterMatch(r.venue,f.venues))return false;
@@ -2030,6 +2037,7 @@
   }
   function matchesAttendance(r,f){
     if(!matchesBase(r,f))return false;
+    if(!multiFilterMatch(r.encounter,f.encounters))return false;
     if((f.dates||[]).length && !(f.dates||[]).includes(r.eventDate))return false;
     if((f.excludeDates||[]).includes(r.eventDate))return false;
     return true;
@@ -2170,6 +2178,8 @@
     filtered.proposals=dataset.proposals.filter(p=>{
       if((f.actions||[]).length && !(f.actions||[]).includes(p.actionCode))return false;
       if(!(f.actions||[]).length && f.action && !textMatch(p.actionCode,f.action))return false;
+      if((f.years||[]).length && !multiFilterMatch(String(p.dataYear||p.year||''),f.years))return false;
+      if((f.darValues||[]).length && !multiFilterMatch(p.isDar,f.darValues))return false;
       if((f.tutors||[]).length && !f.tutors.some(v=>(p.tutors||[]).some(x=>textMatch(x,v))))return false;
       if((f.areas||[]).length && !f.areas.some(v=>textMatch(p.area,v)))return false;
       if((f.venues||[]).length && !f.venues.some(v=>textMatch(p.venue,v)))return false;
@@ -2178,6 +2188,7 @@
       const hasPeopleLevelFilter=!!(
         (f.schools||[]).length || (f.dependencies||[]).length || (f.sectors||[]).length ||
         (f.comunas||[]).length || (f.statuses||[]).length || (f.cargos||[]).length ||
+        (f.years||[]).length || (f.encounters||[]).length || (f.darValues||[]).length ||
         (f.dates||[]).length || f.q
       );
       if(hasPeopleLevelFilter && !scopedCommissionCodes.has(p.code))return false;
@@ -4021,8 +4032,9 @@
     const pairs=[
       ['Acción',joined(f.actions)],['Escuela',joined(f.schools)],['Dependencia',joined(f.dependencies)],
       ['Sector de gestión',joined(f.sectors)],['Comuna',joined(f.comunas)],['Estado',joined(f.statuses)],
+      ['Año',joined(f.years)],['Encuentro',joined(f.encounters)],
       ['Fechas de encuentro',(f.dates||[]).map(formatDate).join(' · ')],['Tutor / capacitador',joined(f.tutors)],
-      ['Área',joined(f.areas)],['Sede',joined(f.venues)],['Turno',joined(f.shifts)],['Cargo',joined(f.cargos)],
+      ['Área',joined(f.areas)],['Sede',joined(f.venues)],['Turno',joined(f.shifts)],['Cargo',joined(f.cargos)],['Es DAR',joined(f.darValues)],
       ['Búsqueda',f.q]
     ];
     return pairs.filter(([,v])=>String(v||'').trim()!=='');
@@ -4076,6 +4088,9 @@
       DOCENTE:r.name||r.email||'',
       ACCIÓN:r.actionCode||'',
       COMISIÓN:r.commissionCode||'',
+      AÑO:r.dataYear||'',
+      UNIVERSO:r.universe||'',
+      'ES DAR':r.isDar||'',
       ESCUELA:upper(r.school)||'',
       CUE:r.cue||'',
       CUEANEXO:r.cueAnexo||'',
@@ -4126,6 +4141,9 @@
       EMAIL:r.email||'',
       ACCIÓN:r.actionCode||'',
       COMISIÓN:r.commissionCode||'',
+      AÑO:r.dataYear||'',
+      UNIVERSO:r.universe||'',
+      'ES DAR':r.isDar||'',
       ENCUENTRO:r.encounter||'',
       FECHA:formatDate(r.eventDate)||'',
       ESCUELA:upper(r.school)||'',
@@ -4228,8 +4246,11 @@
     const wb=XLSX.utils.book_new();
     appendJsonSheet(wb,'Resumen',summary);
     appendJsonSheet(wb,'Por fecha',metrics.map(x=>({
+      ENCUENTRO:x.encounter||'',
       FECHA:formatDate(x.date),
-      BASE:x.baseKind==='observed'?'Participantes observados':'Activos',
+      AÑO:x.dataYear||'',
+      UNIVERSO:x.universe||'',
+      BASE:x.baseKind==='observed'?'Participantes observados':x.baseKind==='universe'?'Universo '+x.universe:x.baseKind==='year'?'Año '+x.dataYear:'Activos',
       ACTIVOS:x.active,
       ASISTENTES:x.attendees,
       'PRESENTISMO %':x.presentism
